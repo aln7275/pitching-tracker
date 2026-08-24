@@ -1,6 +1,6 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Dimensions, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Dimensions, FlatList, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { supabase } from '../supabase';
 
@@ -43,6 +43,26 @@ function summarize(pitches: { outcome: string }[]) {
   });
 
   return { counts, total, targetPct, k, bb };
+}
+
+async function shareSession(item: Session) {
+  const s = summarize(item.pitches);
+   const battersFaced = s.k + s.bb;
+  const message =
+    `Bullpen Session — ${item.session_date}\n` +
+    `${item.session_type}${item.bullpen_subtype ? ' · ' + item.bullpen_subtype : ''}\n\n` +
+    `Pitches: ${s.total}\n` +
+    `T: ${s.counts.T}  C: ${s.counts.C}  N: ${s.counts.N}\n` +
+    `Target %: ${s.targetPct}%\n\n` +
+    `Batters Faced: ${battersFaced}\n` +
+    `K: ${s.k}  BB: ${s.bb}` +
+    (item.notes ? `\n\nNotes: ${item.notes}` : '');
+
+  try {
+    await Share.share({ message });
+  } catch (error) {
+    console.log('Share error:', error);
+  }
 }
 
 function cutoffDate(range: string): Date | null {
@@ -331,7 +351,7 @@ export default function AthleteHomeScreen() {
             <Text style={styles.sectionTitle}>Past Sessions</Text>
           </>
         }
-        renderItem={({ item }) => {
+                renderItem={({ item }) => {
           const s = summarize(item.pitches);
           return (
             <View style={styles.sessionRow}>
@@ -342,6 +362,9 @@ export default function AthleteHomeScreen() {
                   <Text style={styles.pitchTotal}>{s.total} pitches</Text>
                 </View>
               </View>
+              <Pressable style={styles.shareButton} onPress={() => shareSession(item)}>
+                <Text style={styles.shareButtonText}>Share Results</Text>
+              </Pressable>
               <Text style={styles.sessionType}>
                 {item.session_type} {item.bullpen_subtype ? `· ${item.bullpen_subtype}` : ''}
               </Text>
@@ -350,6 +373,7 @@ export default function AthleteHomeScreen() {
                 <Text style={styles.statText}>C: {s.counts.C}</Text>
                 <Text style={styles.statText}>N: {s.counts.N}</Text>
                 <Text style={styles.statDivider}>|</Text>
+                <Text style={styles.statText}>    Batters Faced: {s.k + s.bb}</Text>
                 <Text style={styles.statText}>K: {s.k}</Text>
                 <Text style={styles.statText}>BB: {s.bb}</Text>
               </View>
@@ -410,6 +434,8 @@ const styles = StyleSheet.create({
   statCardSubtext: { fontSize: 12, color: '#999', marginTop: 2 },
 
   sessionRow: { borderWidth: 1, borderColor: '#eee', borderRadius: 10, padding: 14, marginBottom: 10 },
+  shareButton: { alignSelf: 'flex-start', marginTop: 8, marginBottom: 4 },
+  shareButtonText: { fontSize: 12, color: '#4C9BE8', fontWeight: '600' },
   sessionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   headerRight: { alignItems: 'flex-end' },
   sessionDate: { fontSize: 16, fontWeight: '600' },
