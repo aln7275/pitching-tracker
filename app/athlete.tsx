@@ -264,6 +264,15 @@ export default function AthleteHomeScreen() {
               <Text style={styles.buttonText}>Start Bullpen Session</Text>
             </Pressable>
 
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() =>
+                router.push({ pathname: '/athlete-access', params: { athleteId: id, athleteName: name } })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>Manage Access</Text>
+            </Pressable>
+
             <Text style={styles.sectionTitle}>Analytics</Text>
 
             <View style={styles.filterRow}>
@@ -393,6 +402,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: 'bold', marginBottom: 20 },
   button: { backgroundColor: '#4C9BE8', borderRadius: 10, padding: 16, alignItems: 'center', marginBottom: 30 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  secondaryButton: { borderWidth: 1, borderColor: '#4C9BE8', borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 30 },
+  secondaryButtonText: { color: '#4C9BE8', fontSize: 14, fontWeight: '600' },
   sectionTitle: {
     fontSize: 13,
     color: '#888',
