@@ -1,28 +1,41 @@
-import { View, Text, StyleSheet, FlatList, Pressable } from 'react-native';
+import { useState } from 'react';
+import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 
-// Temporary hardcoded data — this will come from Supabase once we connect it in Phase 2
-const athletes = [
-  { id: '1', name: 'Jack' },
-];
+export default function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const router = useRouter();
 
-export default function AthleteListScreen() {
-    const router = useRouter();
+  const handleLogin = () => {
+    // No real authentication yet — that comes in Phase 2 with Supabase.
+    // For now, tapping Log In just moves forward in the app.
+    router.replace('/athletes');
+  };
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Athletes</Text>
-      <FlatList
-        data={athletes}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.athleteRow}
-            onPress={() => router.push({ pathname: '/athlete', params: { name: item.name } })}
-          >
-            <Text style={styles.athleteName}>{item.name}</Text>
-          </Pressable>
-        )}
+      <Text style={styles.title}>Pitching Tracker</Text>
+
+      <TextInput
+        style={styles.input}
+        placeholder="Email"
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        keyboardType="email-address"
       />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+      />
+
+      <Pressable style={styles.button} onPress={handleLogin}>
+        <Text style={styles.buttonText}>Log In</Text>
+      </Pressable>
     </View>
   );
 }
@@ -30,23 +43,34 @@ export default function AthleteListScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
-    paddingHorizontal: 20,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
     backgroundColor: '#fff',
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: 30,
+    textAlign: 'center',
   },
-  athleteRow: {
-    padding: 16,
+  input: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#ccc',
     borderRadius: 10,
-    marginBottom: 10,
+    padding: 14,
+    marginBottom: 14,
+    fontSize: 16,
   },
-  athleteName: {
-    fontSize: 18,
+  button: {
+    backgroundColor: '#4C9BE8',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
