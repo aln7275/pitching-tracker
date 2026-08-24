@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { supabase } from '../supabase';
 
 const PITCH_TYPES = ['Fastball', 'Curveball', 'Changeup', 'Slider'];
 
@@ -69,6 +70,58 @@ export default function BullpenEntryScreen() {
       { text: 'Keep Going', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: () => router.back() },
     ]);
+  };
+
+  const handleSubmit = async () => {
+    if (total === 0) return;
+    setSaving(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      Alert.alert('Not logged in', 'Please log in again.');
+      setSaving(false);
+      return;
+    }
+
+    const { data: session, error: sessionError } = await supabase
+      .from('sessions')
+      .insert({
+        athlete_id: athleteId,
+        user_id: user.id,
+        session_type: 'bullpen',
+        bullpen_subtype: 'TCN',
+        session_date: sessionDate,
+        notes: notes.trim() || null,
+        status: 'submitted',
+      })
+      .select()
+      .single();
+
+    if (sessionError || !session) {
+      Alert.alert('Error saving session', sessionError?.message ?? 'Unknown error');
+      setSaving(false);
+      return;
+    }
+
+    const pitchRows = pitches.map((p, index) => ({
+      session_id: session.id,
+      user_id: user.id,
+      outcome: p.outcome,
+      pitch_type: p.pitchType,
+      speed: p.speed ? parseInt(p.speed, 10) : null,
+      pitch_order: index + 1,
+    }));
+
+    const { error: pitchError } = await supabase.from('pitches').insert(pitchRows);
+
+    setSaving(false);
+    if (pitchError) {
+      Alert.alert('Error saving pitches', pitchError.message);
+      return;
+    }
+
+    Alert.alert('Session Saved', `Logged ${total} pitches for ${athleteName}.`);
+    router.push({ pathname: '/athlete', params: { id: athleteId, name: athleteName } });
   };
 
   return (
@@ -165,7 +218,7 @@ export default function BullpenEntryScreen() {
         style={styles.notesInput}
         value={notes}
         onChangeText={setNotes}
-        placeholder="Felt strong today…"
+        placeholder="Session Notes, e.g. pitch mix, mechanics, athlete's condition etc."
         multiline
       />
 
@@ -173,7 +226,7 @@ export default function BullpenEntryScreen() {
         <Pressable style={styles.cancelButton} onPress={handleCancel}>
           <Text style={styles.cancelButtonText}>Cancel</Text>
         </Pressable>
-        <Pressable style={styles.submitButton} disabled={total === 0 || saving}>
+       <Pressable style={styles.submitButton} onPress={handleSubmit} disabled={total === 0 || saving}>
           <Text style={styles.submitButtonText}>{saving ? 'Saving...' : 'Submit Session'}</Text>
         </Pressable>
       </View>
