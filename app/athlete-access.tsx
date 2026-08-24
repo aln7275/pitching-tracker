@@ -32,6 +32,8 @@ export default function AthleteAccessScreen() {
   const [accessLevel, setAccessLevel] = useState<'view' | 'full'>('view');
   const [saving, setSaving] = useState(false);
 
+  const RELATIONSHIP_OPTIONS = ['Coach', 'Athlete', 'Parent'];
+
   const loadData = useCallback(async () => {
     setLoading(true);
 
@@ -150,12 +152,20 @@ export default function AthleteAccessScreen() {
                   autoCapitalize="none"
                   keyboardType="email-address"
                 />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Relationship (e.g. Coach, Mom) — optional"
-                  value={label}
-                  onChangeText={setLabel}
-                />
+                <Text style={styles.smallLabel}>Relationship</Text>
+                <View style={styles.levelRow}>
+                  {RELATIONSHIP_OPTIONS.map((option) => (
+                    <Pressable
+                      key={option}
+                      style={[styles.levelPill, label === option && styles.levelPillActive]}
+                      onPress={() => setLabel(option)}
+                    >
+                      <Text style={[styles.levelText, label === option && styles.levelTextActive]}>
+                        {option}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
 
                 <View style={styles.levelRow}>
                   <Pressable
@@ -234,4 +244,5 @@ const styles = StyleSheet.create({
   badgePending: { color: '#E8A93B', backgroundColor: '#E8A93B18' },
   revokeText: { color: '#D6524F', fontSize: 13, fontWeight: '600' },
   emptyText: { fontSize: 14, color: '#aaa', textAlign: 'center', marginTop: 20 },
+  smallLabel: { fontSize: 11, color: '#888', marginBottom: 6, textTransform: 'uppercase' },
 });
