@@ -1,13 +1,23 @@
-import { View, Text, StyleSheet } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export default function AthleteHomeScreen() {
-  const { name } = useLocalSearchParams();
+  const { id, name } = useLocalSearchParams();
+  const router = useRouter();
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{name}</Text>
-      <Text style={styles.subtitle}>Athlete home — sessions will show here</Text>
+      <Text style={styles.subtitle}>Sessions will show here</Text>
+
+      <Pressable
+        style={styles.button}
+        onPress={() =>
+          router.push({ pathname: '/bullpen-setup', params: { athleteId: id, athleteName: name } })
+        }
+      >
+        <Text style={styles.buttonText}>Start Bullpen Session</Text>
+      </Pressable>
     </View>
   );
 }
@@ -27,5 +37,17 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: '#666',
+    marginBottom: 30,
+  },
+  button: {
+    backgroundColor: '#4C9BE8',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

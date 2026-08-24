@@ -3,35 +3,39 @@ import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../supabase';
 
-export default function LoginScreen() {
+export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const handleLogin = async () => {
+  const handleSignUp = async () => {
     if (!email.trim() || !password) {
-      Alert.alert('Missing info', 'Please enter your email and password.');
+      Alert.alert('Missing info', 'Please enter an email and password.');
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
     });
     setLoading(false);
 
     if (error) {
-      Alert.alert('Login failed', error.message);
+      Alert.alert('Sign up failed', error.message);
       return;
     }
 
-    router.replace('/athletes');
+    Alert.alert(
+      'Check your email',
+      'We sent you a confirmation link. Confirm your email, then log in.'
+    );
+    router.replace('/');
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Pitching Tracker</Text>
+      <Text style={styles.title}>Create Account</Text>
 
       <TextInput
         style={styles.input}
@@ -49,12 +53,12 @@ export default function LoginScreen() {
         secureTextEntry
       />
 
-      <Pressable style={styles.button} onPress={handleLogin} disabled={loading}>
-        <Text style={styles.buttonText}>{loading ? 'Logging in...' : 'Log In'}</Text>
+      <Pressable style={styles.button} onPress={handleSignUp} disabled={loading}>
+        <Text style={styles.buttonText}>{loading ? 'Creating...' : 'Sign Up'}</Text>
       </Pressable>
 
-      <Link href="/signup" style={styles.link}>
-        <Text style={styles.linkText}>Don't have an account? Sign Up</Text>
+      <Link href="/" style={styles.link}>
+        <Text style={styles.linkText}>Already have an account? Log In</Text>
       </Link>
     </View>
   );

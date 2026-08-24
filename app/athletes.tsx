@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../supabase';
 
 type Athlete = {
@@ -34,7 +34,18 @@ export default function AthleteListScreen() {
   const addAthlete = async () => {
     if (!newName.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from('athletes').insert({ name: newName.trim() });
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      Alert.alert('Not logged in', 'Please log in again.');
+      setSaving(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('athletes')
+      .insert({ name: newName.trim(), user_id: user.id });
+
     setSaving(false);
     if (error) {
       console.log('Error adding athlete:', error.message);
@@ -68,7 +79,7 @@ export default function AthleteListScreen() {
         renderItem={({ item }) => (
           <Pressable
             style={styles.athleteRow}
-            onPress={() => router.push({ pathname: '/athlete', params: { name: item.name } })}
+           onPress={() => router.push({ pathname: '/athlete', params: { id: item.id, name: item.name } })}
           >
             <Text style={styles.athleteName}>{item.name}</Text>
           </Pressable>
