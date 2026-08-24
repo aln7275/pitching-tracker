@@ -9,23 +9,30 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const handleLogin = async () => {
+    const handleLogin = async () => {
     if (!email.trim() || !password) {
       Alert.alert('Missing info', 'Please enter your email and password.');
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     });
-    setLoading(false);
 
     if (error) {
+      setLoading(false);
       Alert.alert('Login failed', error.message);
       return;
     }
 
+                    // Claim any pending access invites sent to this email
+    const { error: claimError } = await supabase.rpc('claim_pending_invites');
+    if (claimError) {
+      console.log('Claim error:', claimError.message);
+    }
+
+    setLoading(false);
     router.replace('/athletes');
   };
 

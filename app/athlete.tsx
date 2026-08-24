@@ -13,6 +13,8 @@ type Session = {
   pitches: { outcome: string }[];
 };
 
+const [canLogSessions, setCanLogSessions] = useState(false);
+
 const DATE_RANGES = [
   { key: 'all-time', label: 'All Time' },
   { key: '1y', label: '1 Year' },
@@ -139,10 +141,40 @@ export default function AthleteHomeScreen() {
     setLoading(false);
   }, [id]);
 
-  useFocusEffect(
+    useFocusEffect(
     useCallback(() => {
       fetchSessions();
     }, [fetchSessions])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data: athlete } = await supabase
+          .from('athletes')
+          .select('user_id')
+          .eq('id', id)
+          .single();
+
+        if (athlete?.user_id === user.id) {
+          setCanLogSessions(true);
+          return;
+        }
+
+        const { data: access } = await supabase
+          .from('athlete_access')
+          .select('access_level')
+          .eq('athlete_id', id)
+          .eq('granted_to_user_id', user.id)
+          .eq('status', 'active')
+          .maybeSingle();
+
+        setCanLogSessions(access?.access_level === 'full');
+      })();
+    }, [id])
   );
 
   const filteredSessions = useMemo(() => {
@@ -255,14 +287,16 @@ export default function AthleteHomeScreen() {
           <>
             <Text style={styles.title}>{name}</Text>
 
-            <Pressable
-              style={styles.button}
-              onPress={() =>
-                router.push({ pathname: '/bullpen-setup', params: { athleteId: id, athleteName: name } })
-              }
-            >
-              <Text style={styles.buttonText}>Start Bullpen Session</Text>
-            </Pressable>
+                        {canLogSessions && (
+              <Pressable
+                style={styles.button}
+                onPress={() =>
+                  router.push({ pathname: '/bullpen-setup', params: { athleteId: id, athleteName: name } })
+                }
+              >
+                <Text style={styles.buttonText}>Start Bullpen Session</Text>
+              </Pressable>
+            )}
 
             <Pressable
               style={styles.secondaryButton}
