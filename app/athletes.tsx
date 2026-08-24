@@ -1,12 +1,26 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { supabase } from '../supabase';
 
 type Athlete = {
   id: number;
   name: string;
+  birthdate: string | null;
 };
+
+function calculateAge(birthdate: string | null): number | null {
+  if (!birthdate) return null;
+  const today = new Date();
+  const birth = new Date(birthdate);
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age;
+}
 
 export default function AthleteListScreen() {
   const router = useRouter();
@@ -14,6 +28,8 @@ export default function AthleteListScreen() {
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [newName, setNewName] = useState('');
+  const [birthdate, setBirthdate] = useState<Date | null>(null);
+  const [showBirthdatePicker, setShowBirthdatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -42,9 +58,11 @@ export default function AthleteListScreen() {
       return;
     }
 
-    const { error } = await supabase
-      .from('athletes')
-      .insert({ name: newName.trim(), user_id: user.id });
+    const { error } = await supabase.from('athletes').insert({
+      name: newName.trim(),
+      user_id: user.id,
+      birthdate: birthdate ? birthdate.toISOString().split('T')[0] : null,
+    });
 
     setSaving(false);
     if (error) {
@@ -52,6 +70,7 @@ export default function AthleteListScreen() {
       return;
     }
     setNewName('');
+    setBirthdate(null);
     setModalVisible(false);
     fetchAthletes();
   };
@@ -79,9 +98,12 @@ export default function AthleteListScreen() {
         renderItem={({ item }) => (
           <Pressable
             style={styles.athleteRow}
-           onPress={() => router.push({ pathname: '/athlete', params: { id: item.id, name: item.name } })}
+            onPress={() => router.push({ pathname: '/athlete', params: { id: item.id, name: item.name } })}
           >
             <Text style={styles.athleteName}>{item.name}</Text>
+            {calculateAge(item.birthdate) !== null && (
+              <Text style={styles.athleteAge}>Age {calculateAge(item.birthdate)}</Text>
+            )}
           </Pressable>
         )}
         ListEmptyComponent={<Text style={styles.emptyText}>No athletes yet.</Text>}
@@ -98,6 +120,23 @@ export default function AthleteListScreen() {
               onChangeText={setNewName}
               autoFocus
             />
+            <Pressable style={styles.input} onPress={() => setShowBirthdatePicker(true)}>
+              <Text style={{ color: birthdate ? '#000' : '#999' }}>
+                {birthdate ? birthdate.toLocaleDateString() : 'Birthdate (optional)'}
+              </Text>
+            </Pressable>
+
+            {showBirthdatePicker && (
+              <DateTimePicker
+                value={birthdate ?? new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event, selectedDate) => {
+                  setShowBirthdatePicker(false);
+                  if (selectedDate) setBirthdate(selectedDate);
+                }}
+              />
+            )}
             <View style={styles.modalButtons}>
               <Pressable
                 style={[styles.modalButton, styles.cancelButton]}
@@ -160,6 +199,7 @@ const styles = StyleSheet.create({
   athleteName: {
     fontSize: 18,
   },
+  athleteAge: { fontSize: 13, color: '#888', marginTop: 2 },
   emptyText: {
     fontSize: 16,
     color: '#888',
