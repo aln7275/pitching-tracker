@@ -54,57 +54,41 @@ function cutoffDate(range: string): Date | null {
   return d;
 }
 
-function TCNBarChart({ dataPoints }: { dataPoints: { label: string; T: number; C: number; N: number }[] }) {
-  const CHART_HEIGHT = 160;
-  const maxTotal = Math.max(...dataPoints.map((d) => d.T + d.C + d.N), 1);
+function TCNBarChart({ totals }: { totals: { T: number; C: number; N: number } }) {
+  const total = totals.T + totals.C + totals.N;
+  const tWidth = total === 0 ? 0 : (totals.T / total) * 100;
+  const cWidth = total === 0 ? 0 : (totals.C / total) * 100;
+  const nWidth = total === 0 ? 0 : (totals.N / total) * 100;
 
   return (
-    <View>
-      <View style={styles.customChartRow}>
-        {dataPoints.map((d, i) => {
-          const total = d.T + d.C + d.N;
-          const scale = total === 0 ? 0 : CHART_HEIGHT / maxTotal;
-          const tHeight = d.T * scale;
-          const cHeight = d.C * scale;
-          const nHeight = d.N * scale;
-
-          return (
-            <View key={i} style={styles.customBarColumn}>
-              <View style={[styles.customBarStack, { height: CHART_HEIGHT }]}>
-                {d.N > 0 && (
-                  <View style={[styles.customSegment, { height: nHeight, backgroundColor: '#D6524F' }]}>
-                    {nHeight > 16 && <Text style={styles.customSegmentText}>{d.N}</Text>}
-                  </View>
-                )}
-                {d.C > 0 && (
-                  <View style={[styles.customSegment, { height: cHeight, backgroundColor: '#E8A93B' }]}>
-                    {cHeight > 16 && <Text style={styles.customSegmentText}>{d.C}</Text>}
-                  </View>
-                )}
-                {d.T > 0 && (
-                  <View style={[styles.customSegment, { height: tHeight, backgroundColor: '#3FB98A' }]}>
-                    {tHeight > 16 && <Text style={styles.customSegmentText}>{d.T}</Text>}
-                  </View>
-                )}
-              </View>
-              <Text style={styles.customBarLabel}>{d.label}</Text>
-            </View>
-          );
-        })}
+    <View style={styles.tcnCard}>
+      <View style={styles.tcnBar}>
+        {totals.T > 0 && (
+          <View style={[styles.tcnSegment, { width: `${tWidth}%`, backgroundColor: '#3FB98A' }]} />
+        )}
+        {totals.C > 0 && (
+          <View style={[styles.tcnSegment, { width: `${cWidth}%`, backgroundColor: '#E8A93B' }]} />
+        )}
+        {totals.N > 0 && (
+          <View style={[styles.tcnSegment, { width: `${nWidth}%`, backgroundColor: '#D6524F' }]} />
+        )}
       </View>
 
-      <View style={styles.legendRow}>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: '#3FB98A' }]} />
-          <Text style={styles.legendText}>T</Text>
+      <View style={styles.tcnStatsRow}>
+        <View style={styles.tcnStatItem}>
+          <Text style={[styles.tcnStatNumber, { color: '#3FB98A' }]}>{totals.T}</Text>
+          <Text style={styles.tcnStatLabel}>T</Text>
+          <Text style={styles.tcnStatPct}>{Math.round(tWidth)}%</Text>
         </View>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: '#E8A93B' }]} />
-          <Text style={styles.legendText}>C</Text>
+        <View style={styles.tcnStatItem}>
+          <Text style={[styles.tcnStatNumber, { color: '#E8A93B' }]}>{totals.C}</Text>
+          <Text style={styles.tcnStatLabel}>C</Text>
+          <Text style={styles.tcnStatPct}>{Math.round(cWidth)}%</Text>
         </View>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: '#D6524F' }]} />
-          <Text style={styles.legendText}>N</Text>
+        <View style={styles.tcnStatItem}>
+          <Text style={[styles.tcnStatNumber, { color: '#D6524F' }]}>{totals.N}</Text>
+          <Text style={styles.tcnStatLabel}>N</Text>
+          <Text style={styles.tcnStatPct}>{Math.round(nWidth)}%</Text>
         </View>
       </View>
     </View>
@@ -166,15 +150,11 @@ export default function AthleteHomeScreen() {
         const d = new Date(s.session_date + 'T00:00:00');
         return {
           label: `${d.getMonth() + 1}/${d.getDate()}`,
-          T: sum.counts.T,
-          C: sum.counts.C,
-          N: sum.counts.N,
           targetPct: sum.targetPct,
         };
       });
     }
 
-    // Weekly buckets for longer ranges
     const buckets = new Map<string, any>();
     chronological.forEach((s) => {
       const d = new Date(s.session_date + 'T00:00:00');
@@ -184,12 +164,10 @@ export default function AthleteHomeScreen() {
       const sum = summarize(s.pitches);
 
       if (!buckets.has(key)) {
-        buckets.set(key, { weekStart, T: 0, C: 0, N: 0, total: 0 });
+        buckets.set(key, { weekStart, T: 0, total: 0 });
       }
       const b = buckets.get(key);
       b.T += sum.counts.T;
-      b.C += sum.counts.C;
-      b.N += sum.counts.N;
       b.total += sum.total;
     });
 
@@ -197,14 +175,23 @@ export default function AthleteHomeScreen() {
       .sort((a, b) => a.weekStart - b.weekStart)
       .map((b) => ({
         label: `${b.weekStart.getMonth() + 1}/${b.weekStart.getDate()}`,
-        T: b.T,
-        C: b.C,
-        N: b.N,
         targetPct: b.total === 0 ? 0 : Math.round((b.T / b.total) * 100),
       }));
   }, [filteredSessions, granularity]);
 
-  // Batters Faced totals — aggregated across the whole filtered range, not per data point
+  const tcnTotals = useMemo(() => {
+    return filteredSessions.reduce(
+      (acc, s) => {
+        const sum = summarize(s.pitches);
+        acc.T += sum.counts.T;
+        acc.C += sum.counts.C;
+        acc.N += sum.counts.N;
+        return acc;
+      },
+      { T: 0, C: 0, N: 0 }
+    );
+  }, [filteredSessions]);
+
   const battersFacedTotals = useMemo(() => {
     const totals = filteredSessions.reduce(
       (acc, s) => {
@@ -213,7 +200,7 @@ export default function AthleteHomeScreen() {
         acc.bb += sum.bb;
         return acc;
       },
-      { k: 0, bb: 0, hits: 0 } // hits stays 0 until Game tracking exists
+      { k: 0, bb: 0, hits: 0 }
     );
     const battersFaced = totals.k + totals.bb + totals.hits;
     return {
@@ -307,7 +294,7 @@ export default function AthleteHomeScreen() {
                 />
 
                 <Text style={styles.chartTitle}>T / C / N Breakdown</Text>
-                <TCNBarChart dataPoints={dataPoints} />
+                <TCNBarChart totals={tcnTotals} />
 
                 <Text style={styles.chartTitle}>Batters Faced Outcomes</Text>
                 <View style={styles.statCard}>
@@ -390,24 +377,23 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 12,
   },
-    customChartRow: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-end', marginBottom: 10 },
-  customBarColumn: { alignItems: 'center', flex: 1 },
-  customBarStack: { width: 32, justifyContent: 'flex-end' },
-  customSegment: { width: '100%', justifyContent: 'center', alignItems: 'center' },
-  customSegmentText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  customBarLabel: { fontSize: 11, color: '#888', marginTop: 6 },
-  legendRow: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 4 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendText: { fontSize: 12, color: '#666' },
-  
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   filterPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: '#ddd' },
   filterPillActive: { backgroundColor: '#4C9BE8', borderColor: '#4C9BE8' },
   filterPillText: { fontSize: 12, color: '#444' },
   filterPillTextActive: { color: '#fff', fontWeight: '600' },
   chartTitle: { fontSize: 13, fontWeight: '600', color: '#333', marginTop: 14, marginBottom: 8 },
-  chart: { borderRadius: 12 },
+  chart: { borderRadius: 12, borderWidth: 1, borderColor: '#eee' },
+
+  tcnCard: { backgroundColor: '#f7f8fa', borderRadius: 14, borderWidth: 1, borderColor: '#eee', padding: 18, marginBottom: 10 },
+  tcnBar: { flexDirection: 'row', height: 36, borderRadius: 8, overflow: 'hidden', marginBottom: 16 },
+  tcnSegment: { height: '100%' },
+  tcnStatsRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  tcnStatItem: { alignItems: 'center' },
+  tcnStatNumber: { fontSize: 24, fontWeight: 'bold' },
+  tcnStatLabel: { fontSize: 12, color: '#666', marginTop: 2 },
+  tcnStatPct: { fontSize: 12, color: '#999', marginTop: 2 },
+
   statCard: { backgroundColor: '#f7f8fa', borderRadius: 14, padding: 18, alignItems: 'center', marginBottom: 10 },
   statCardTotal: { fontSize: 32, fontWeight: 'bold', color: '#333' },
   statCardTotalLabel: {
@@ -422,6 +408,7 @@ const styles = StyleSheet.create({
   statCardNumber: { fontSize: 24, fontWeight: 'bold' },
   statCardLabel: { fontSize: 12, color: '#666', marginTop: 2 },
   statCardSubtext: { fontSize: 12, color: '#999', marginTop: 2 },
+
   sessionRow: { borderWidth: 1, borderColor: '#eee', borderRadius: 10, padding: 14, marginBottom: 10 },
   sessionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   headerRight: { alignItems: 'flex-end' },
@@ -435,4 +422,3 @@ const styles = StyleSheet.create({
   sessionNotes: { fontSize: 13, color: '#888', marginTop: 6, fontStyle: 'italic' },
   emptyText: { fontSize: 14, color: '#aaa', textAlign: 'center', marginVertical: 20 },
 });
-
