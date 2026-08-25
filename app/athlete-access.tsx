@@ -18,6 +18,8 @@ type AccessGrant = {
   access_level: string;
   status: string;
   relationship_label: string | null;
+  granted_to_user_id: string | null;
+  name: string | null;
 };
 
 export default function AthleteAccessScreen() {
@@ -26,7 +28,7 @@ export default function AthleteAccessScreen() {
   const [isOwner, setIsOwner] = useState(false);
   const [grants, setGrants] = useState<AccessGrant[]>([]);
   const [loading, setLoading] = useState(true);
-
+const [profileNames, setProfileNames] = useState<Record<string, string>>({});
   const [email, setEmail] = useState('');
   const [label, setLabel] = useState('');
   const [accessLevel, setAccessLevel] = useState<'view' | 'full'>('view');
@@ -58,7 +60,25 @@ export default function AthleteAccessScreen() {
       console.log('Error loading access:', error.message);
     } else {
       setGrants(data as AccessGrant[]);
+
+      const userIds = (data as AccessGrant[])
+        .map((g) => g.granted_to_user_id)
+        .filter((id): id is string => id !== null);
+
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, name')
+          .in('id', userIds);
+
+        const nameMap: Record<string, string> = {};
+        profiles?.forEach((p) => {
+          if (p.name) nameMap[p.id] = p.name;
+        });
+        setProfileNames(nameMap);
+      }
     }
+
     setLoading(false);
   }, [athleteId]);
 
@@ -81,7 +101,7 @@ export default function AthleteAccessScreen() {
       return;
     }
 
-    const { error } = await supabase.from('athlete_access').insert({
+        const { error } = await supabase.from('athlete_access').insert({
       athlete_id: athleteId,
       invited_email: email.trim().toLowerCase(),
       access_level: accessLevel,
@@ -104,7 +124,7 @@ export default function AthleteAccessScreen() {
   const revokeAccess = (grant: AccessGrant) => {
     Alert.alert(
       'Revoke access?',
-      `Remove access for ${grant.relationship_label || grant.invited_email}?`,
+      `Remove access for ${(grant.granted_to_user_id && profileNames[grant.granted_to_user_id]) || grant.relationship_label || grant.invited_email}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -115,6 +135,32 @@ export default function AthleteAccessScreen() {
             if (error) {
               Alert.alert('Error revoking access', error.message);
             } else {
+              loadData();
+            }
+          },
+        },
+      ]
+    );
+  };
+
+    const transferOwnership = (grant: AccessGrant) => {
+    Alert.alert(
+      'Transfer Ownership?',
+       `Make ${(grant.granted_to_user_id && profileNames[grant.granted_to_user_id]) || grant.relationship_label || grant.invited_email} the new owner of ${athleteName}? You'll keep full access, but they'll control sharing and can remove your access going forward.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Transfer',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await supabase.rpc('transfer_ownership', {
+              p_athlete_id: athleteId,
+              p_new_owner_user_id: grant.granted_to_user_id,
+            });
+            if (error) {
+              Alert.alert('Error transferring ownership', error.message);
+            } else {
+              Alert.alert('Ownership transferred');
               loadData();
             }
           },
@@ -144,6 +190,7 @@ export default function AthleteAccessScreen() {
               <View style={styles.inviteCard}>
                 <Text style={styles.sectionLabel}>Invite Someone</Text>
 
+               
                 <TextInput
                   style={styles.input}
                   placeholder="Email address"
@@ -192,17 +239,43 @@ export default function AthleteAccessScreen() {
               </View>
             )}
 
+{isOwner && grants.some((g) => g.status === 'active') && (
+              <View style={styles.inviteCard}>
+                <Text style={styles.sectionLabel}>Transfer Ownership</Text>
+                <Text style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>
+                  Make someone else the owner. You'll keep full access, but they'll take over control.
+                </Text>
+                {grants
+                  .filter((g) => g.status === 'active')
+                  .map((g) => (
+                    <Pressable
+                      key={g.id}
+                      style={styles.transferRow}
+                      onPress={() => transferOwnership(g)}
+                    >
+                    <Text style={styles.transferName}>
+                        {(g.granted_to_user_id && profileNames[g.granted_to_user_id]) || g.relationship_label || g.invited_email}
+                      </Text>
+                      <Text style={styles.transferAction}>Make Owner →</Text>
+                    </Pressable>
+                  ))}
+              </View>
+            )}
+
             <Text style={styles.sectionLabel}>Shared With</Text>
           </>
         }
         renderItem={({ item }) => (
           <View style={styles.grantRow}>
             <View>
-              <Text style={styles.grantName}>{item.relationship_label || item.invited_email}</Text>
-              {item.relationship_label && (
-                <Text style={styles.grantEmail}>{item.invited_email}</Text>
-              )}
+              <Text style={styles.grantName}>
+                {(item.granted_to_user_id && profileNames[item.granted_to_user_id]) || item.invited_email}
+              </Text>
+              <Text style={styles.grantEmail}>{item.invited_email}</Text>
               <View style={styles.badgeRow}>
+                {item.relationship_label && (
+                  <Text style={styles.badge}>{item.relationship_label}</Text>
+                )}
                 <Text style={styles.badge}>{item.access_level === 'full' ? 'Full Access' : 'View Only'}</Text>
                 <Text style={[styles.badge, item.status === 'pending' && styles.badgePending]}>
                   {item.status}
@@ -236,6 +309,9 @@ const styles = StyleSheet.create({
   levelTextActive: { color: '#fff', fontWeight: '600' },
   inviteButton: { backgroundColor: '#3FB98A', borderRadius: 10, padding: 14, alignItems: 'center' },
   inviteButtonText: { color: '#fff', fontWeight: '600' },
+  transferRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#eee' },
+  transferName: { fontSize: 14, fontWeight: '600' },
+  transferAction: { fontSize: 13, color: '#4C9BE8', fontWeight: '600' },
   grantRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#eee', borderRadius: 10, padding: 14, marginBottom: 8 },
   grantName: { fontSize: 15, fontWeight: '600' },
   grantEmail: { fontSize: 12, color: '#888', marginTop: 1 },

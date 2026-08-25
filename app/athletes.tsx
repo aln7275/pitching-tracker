@@ -2,6 +2,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabase';
 
 type Athlete = {
@@ -24,6 +25,7 @@ function calculateAge(birthdate: string | null): number | null {
 
 export default function AthleteListScreen() {
   const router = useRouter();
+  const { signOut } = useAuth();
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
@@ -31,6 +33,8 @@ export default function AthleteListScreen() {
   const [birthdate, setBirthdate] = useState<Date | null>(null);
   const [showBirthdatePicker, setShowBirthdatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [editingName, setEditingName] = useState(false);
 
   useEffect(() => {
     fetchAthletes();
@@ -45,6 +49,33 @@ export default function AthleteListScreen() {
       setAthletes(data as Athlete[]);
     }
     setLoading(false);
+  };
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase
+        .from('profiles')
+        .select('name')
+        .eq('id', user.id)
+        .single();
+      if (data?.name) setProfileName(data.name);
+    };
+    fetchProfile();
+  }, []);
+
+   const saveProfileName = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+        const { error } = await supabase
+      .from('profiles')
+      .upsert({ id: user.id, name: profileName.trim() });
+    if (error) {
+      Alert.alert('Error saving name', error.message);
+    } else {
+      setEditingName(false);
+    }
   };
 
   const addAthlete = async () => {
@@ -83,14 +114,46 @@ export default function AthleteListScreen() {
     );
   }
 
-  return (
+      return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Athletes</Text>
-        <Pressable style={styles.addButton} onPress={() => setModalVisible(true)}>
-          <Text style={styles.addButtonText}>+ Add</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <Pressable style={styles.addButton} onPress={() => setModalVisible(true)}>
+            <Text style={styles.addButtonText}>+ Add</Text>
+          </Pressable>
+          <Pressable
+            style={styles.logoutButton}
+            onPress={async () => {
+              await signOut();
+              router.replace('/');
+            }}
+          >
+            <Text style={styles.logoutButtonText}>Log Out</Text>
+          </Pressable>
+        </View>
       </View>
+
+         {editingName ? (
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+          <TextInput
+            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+            value={profileName}
+            onChangeText={setProfileName}
+            placeholder="Your name"
+            autoFocus
+          />
+          <Pressable style={styles.addButton} onPress={saveProfileName}>
+            <Text style={styles.addButtonText}>Save</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Pressable onPress={() => setEditingName(true)} style={{ marginBottom: 16 }}>
+          <Text style={{ color: '#4C9BE8', fontSize: 14 }}>
+            {profileName ? `👤 ${profileName} (tap to edit)` : '👤 Set your name'}
+          </Text>
+        </Pressable>
+      )}
 
       <FlatList
         data={athletes}
@@ -189,6 +252,16 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
+  logoutButton: {
+  backgroundColor: '#eee',
+  paddingHorizontal: 16,
+  paddingVertical: 8,
+  borderRadius: 8,
+},
+logoutButtonText: {
+  color: '#333',
+  fontWeight: '600',
+},
   athleteRow: {
     padding: 16,
     borderWidth: 1,

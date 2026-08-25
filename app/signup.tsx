@@ -6,18 +6,22 @@ import { supabase } from '../supabase';
 export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const handleSignUp = async () => {
-    if (!email.trim() || !password) {
-      Alert.alert('Missing info', 'Please enter an email and password.');
+    if (!name.trim() || !email.trim() || !password) {
+      Alert.alert('Missing info', 'Please enter your name, email, and password.');
       return;
     }
     setLoading(true);
     const { error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
+      options: {
+        data: { name: name.trim() },
+      },
     });
     setLoading(false);
 
@@ -37,6 +41,12 @@ export default function SignUpScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Create Account</Text>
 
+      <TextInput
+        style={styles.input}
+        placeholder="Your name (e.g. Coach Wilson, or Mike Smith)"
+        value={name}
+        onChangeText={setName}
+      />
       <TextInput
         style={styles.input}
         placeholder="Email"
