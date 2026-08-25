@@ -13,8 +13,6 @@ type Session = {
   pitches: { outcome: string }[];
 };
 
-const [canLogSessions, setCanLogSessions] = useState(false);
-
 const DATE_RANGES = [
   { key: 'all-time', label: 'All Time' },
   { key: '1y', label: '1 Year' },
@@ -124,6 +122,7 @@ export default function AthleteHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('all-time');
   const [sessionType, setSessionType] = useState('all');
+  const [canLogSessions, setCanLogSessions] = useState(false);
 
   const fetchSessions = useCallback(async () => {
     setLoading(true);
