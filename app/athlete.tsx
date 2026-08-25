@@ -1,6 +1,7 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Dimensions, FlatList, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, FlatList, Modal, Platform, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { supabase } from '../supabase';
 
@@ -11,6 +12,14 @@ type Session = {
   bullpen_subtype: string | null;
   notes: string | null;
   pitches: { outcome: string }[];
+};
+
+type AthleteData = {
+  name: string;
+  birthdate: string | null;
+  throwing_hand: string | null;
+  sport: string;
+  team_name: string | null;
 };
 
 const DATE_RANGES = [
@@ -47,7 +56,7 @@ function summarize(pitches: { outcome: string }[]) {
 
 async function shareSession(item: Session) {
   const s = summarize(item.pitches);
-   const battersFaced = s.k + s.bb;
+  const battersFaced = s.k + s.bb;
   const message =
     `Bullpen Session — ${item.session_date}\n` +
     `${item.session_type}${item.bullpen_subtype ? ' · ' + item.bullpen_subtype : ''}\n\n` +
@@ -72,6 +81,18 @@ function cutoffDate(range: string): Date | null {
   else if (range === '1m') d.setMonth(d.getMonth() - 1);
   else return null;
   return d;
+}
+
+function calculateAge(birthdate: string | null): number | null {
+  if (!birthdate) return null;
+  const today = new Date();
+  const birth = new Date(birthdate);
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age;
 }
 
 function TCNBarChart({ totals }: { totals: { T: number; C: number; N: number } }) {
@@ -124,6 +145,17 @@ export default function AthleteHomeScreen() {
   const [sessionType, setSessionType] = useState('all');
   const [canLogSessions, setCanLogSessions] = useState(false);
 
+  // Athlete profile data + edit state
+  const [athleteData, setAthleteData] = useState<AthleteData | null>(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editBirthdate, setEditBirthdate] = useState<Date | null>(null);
+  const [showBirthdatePicker, setShowBirthdatePicker] = useState(false);
+  const [editThrowingHand, setEditThrowingHand] = useState<'R' | 'L' | null>(null);
+  const [editSport, setEditSport] = useState<'baseball' | 'softball'>('baseball');
+  const [editTeamName, setEditTeamName] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+
   const fetchSessions = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -140,10 +172,30 @@ export default function AthleteHomeScreen() {
     setLoading(false);
   }, [id]);
 
-    useFocusEffect(
+  const fetchAthleteData = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('athletes')
+      .select('name, birthdate, throwing_hand, sport, team_name')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.log('Error fetching athlete:', error.message);
+    } else if (data) {
+      setAthleteData(data as AthleteData);
+    }
+  }, [id]);
+
+  useFocusEffect(
     useCallback(() => {
       fetchSessions();
     }, [fetchSessions])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchAthleteData();
+    }, [fetchAthleteData])
   );
 
   useFocusEffect(
@@ -175,6 +227,45 @@ export default function AthleteHomeScreen() {
       })();
     }, [id])
   );
+
+  const openEditModal = () => {
+    if (!athleteData) return;
+    setEditName(athleteData.name);
+    setEditBirthdate(athleteData.birthdate ? new Date(athleteData.birthdate + 'T00:00:00') : null);
+    setEditThrowingHand((athleteData.throwing_hand as 'R' | 'L' | null) ?? null);
+    setEditSport((athleteData.sport as 'baseball' | 'softball') ?? 'baseball');
+    setEditTeamName(athleteData.team_name ?? '');
+    setEditModalVisible(true);
+  };
+
+  const saveAthleteEdit = async () => {
+    if (!editName.trim()) {
+      Alert.alert('Missing name', 'Athlete name cannot be empty.');
+      return;
+    }
+    setSavingEdit(true);
+
+    const { error } = await supabase
+      .from('athletes')
+      .update({
+        name: editName.trim(),
+        birthdate: editBirthdate ? editBirthdate.toISOString().split('T')[0] : null,
+        throwing_hand: editThrowingHand,
+        sport: editSport,
+        team_name: editTeamName.trim() || null,
+      })
+      .eq('id', id);
+
+    setSavingEdit(false);
+
+    if (error) {
+      Alert.alert('Error saving changes', error.message);
+      return;
+    }
+
+    setEditModalVisible(false);
+    fetchAthleteData();
+  };
 
   const filteredSessions = useMemo(() => {
     const cutoff = cutoffDate(dateRange);
@@ -277,6 +368,9 @@ export default function AthleteHomeScreen() {
     barPercentage: 0.6,
   };
 
+  const displayName = athleteData?.name ?? name;
+  const age = athleteData ? calculateAge(athleteData.birthdate) : null;
+
   return (
     <View style={styles.container}>
       <FlatList
@@ -284,9 +378,29 @@ export default function AthleteHomeScreen() {
         keyExtractor={(item) => item.id.toString()}
         ListHeaderComponent={
           <>
-            <Text style={styles.title}>{name}</Text>
+            <View style={styles.titleRow}>
+              <Text style={styles.title}>{displayName}</Text>
+              <Pressable onPress={openEditModal} style={styles.editPencil}>
+                <Text style={styles.editPencilText}>✏️</Text>
+              </Pressable>
+            </View>
 
-                        {canLogSessions && (
+            {athleteData && (
+              <View style={styles.metaRow}>
+                {age !== null && <Text style={styles.metaText}>Age {age}</Text>}
+                {athleteData.throwing_hand && (
+                  <Text style={styles.metaText}>{athleteData.throwing_hand}HP</Text>
+                )}
+                <Text style={styles.metaText}>
+                  {athleteData.sport === 'softball' ? 'Softball' : 'Baseball'}
+                </Text>
+                {athleteData.team_name && (
+                  <Text style={styles.metaText}>{athleteData.team_name}</Text>
+                )}
+              </View>
+            )}
+
+            {canLogSessions && (
               <Pressable
                 style={styles.button}
                 onPress={() =>
@@ -393,7 +507,7 @@ export default function AthleteHomeScreen() {
             <Text style={styles.sectionTitle}>Past Sessions</Text>
           </>
         }
-                renderItem={({ item }) => {
+        renderItem={({ item }) => {
           const s = summarize(item.pitches);
           return (
             <View style={styles.sessionRow}>
@@ -426,13 +540,114 @@ export default function AthleteHomeScreen() {
         ListEmptyComponent={!loading ? <Text style={styles.emptyText}>No sessions logged yet.</Text> : null}
         contentContainerStyle={{ paddingBottom: 40 }}
       />
+
+      <Modal visible={editModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Edit Athlete</Text>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Athlete name"
+              value={editName}
+              onChangeText={setEditName}
+            />
+
+            <Pressable style={styles.input} onPress={() => setShowBirthdatePicker(true)}>
+              <Text style={{ color: editBirthdate ? '#000' : '#999' }}>
+                {editBirthdate ? editBirthdate.toLocaleDateString() : 'Birthdate (optional)'}
+              </Text>
+            </Pressable>
+
+            {showBirthdatePicker && (
+              <DateTimePicker
+                value={editBirthdate ?? new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event, selectedDate) => {
+                  setShowBirthdatePicker(false);
+                  if (selectedDate) setEditBirthdate(selectedDate);
+                }}
+              />
+            )}
+
+            <Text style={styles.smallLabel}>Throwing Hand</Text>
+            <View style={styles.toggleRow}>
+              <Pressable
+                style={[styles.togglePill, editThrowingHand === 'R' && styles.togglePillActive]}
+                onPress={() => setEditThrowingHand('R')}
+              >
+                <Text style={[styles.toggleText, editThrowingHand === 'R' && styles.toggleTextActive]}>
+                  Right
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.togglePill, editThrowingHand === 'L' && styles.togglePillActive]}
+                onPress={() => setEditThrowingHand('L')}
+              >
+                <Text style={[styles.toggleText, editThrowingHand === 'L' && styles.toggleTextActive]}>
+                  Left
+                </Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.smallLabel}>Sport</Text>
+            <View style={styles.toggleRow}>
+              <Pressable
+                style={[styles.togglePill, editSport === 'baseball' && styles.togglePillActive]}
+                onPress={() => setEditSport('baseball')}
+              >
+                <Text style={[styles.toggleText, editSport === 'baseball' && styles.toggleTextActive]}>
+                  Baseball
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.togglePill, editSport === 'softball' && styles.togglePillActive]}
+                onPress={() => setEditSport('softball')}
+              >
+                <Text style={[styles.toggleText, editSport === 'softball' && styles.toggleTextActive]}>
+                  Softball
+                </Text>
+              </Pressable>
+            </View>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Team name (optional)"
+              value={editTeamName}
+              onChangeText={setEditTeamName}
+            />
+
+            <View style={styles.modalButtons}>
+              <Pressable
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setEditModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={saveAthleteEdit}
+                disabled={savingEdit}
+              >
+                <Text style={styles.saveButtonText}>{savingEdit ? 'Saving...' : 'Save'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingTop: 60, paddingHorizontal: 20, backgroundColor: '#fff' },
-  title: { fontSize: 28, fontWeight: 'bold', marginBottom: 20 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
+  title: { fontSize: 28, fontWeight: 'bold' },
+  editPencil: { padding: 4 },
+  editPencilText: { fontSize: 18 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  metaText: { fontSize: 13, color: '#888' },
   button: { backgroundColor: '#4C9BE8', borderRadius: 10, padding: 16, alignItems: 'center', marginBottom: 30 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   secondaryButton: { borderWidth: 1, borderColor: '#4C9BE8', borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 30 },
@@ -491,4 +706,60 @@ const styles = StyleSheet.create({
   statDivider: { fontSize: 13, color: '#ccc' },
   sessionNotes: { fontSize: 13, color: '#888', marginTop: 6, fontStyle: 'italic' },
   emptyText: { fontSize: 14, color: '#aaa', textAlign: 'center', marginVertical: 20 },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  smallLabel: { fontSize: 11, color: '#888', marginBottom: 6, textTransform: 'uppercase' },
+  toggleRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  togglePill: { flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', alignItems: 'center' },
+  togglePillActive: { backgroundColor: '#4C9BE8', borderColor: '#4C9BE8' },
+  toggleText: { fontSize: 14, color: '#444' },
+  toggleTextActive: { color: '#fff', fontWeight: '600' },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#eee',
+  },
+  cancelButtonText: {
+    color: '#333',
+    fontWeight: '600',
+  },
+  saveButton: {
+    backgroundColor: '#4C9BE8',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
 });
+
