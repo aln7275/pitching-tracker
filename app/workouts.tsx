@@ -3,7 +3,6 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   Modal,
   Pressable,
   ScrollView,
@@ -12,7 +11,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { LineChart } from 'react-native-chart-kit';
 import { Calendar } from 'react-native-calendars';
 import { DurationInput } from '../components/DurationInput';
 import { supabase } from '../supabase';
@@ -33,48 +31,14 @@ const STATUS_COLOR: Record<string, string> = {
   missed: '#D6524F',
 };
 
-const DATE_RANGES = [
-  { key: 'all-time', label: 'All Time' },
-  { key: '1y', label: '1 Year' },
-  { key: '3m', label: '3 Months' },
-  { key: '1m', label: '1 Month' },
-];
-
-function cutoffDate(range: string): Date | null {
-  const d = new Date();
-  if (range === '1y') d.setFullYear(d.getFullYear() - 1);
-  else if (range === '3m') d.setMonth(d.getMonth() - 3);
-  else if (range === '1m') d.setMonth(d.getMonth() - 1);
-  else return null;
-  return d;
-}
-
-function toYMD(d: Date) {
-  return d.toISOString().split('T')[0];
-}
-
-function primaryMetric(row: WorkoutExerciseRow): { key: ExerciseFieldKey; label: string; value: number } | null {
-  const e = row.exercises;
-  if (e.requires_weight && row.actual_weight != null) return { key: 'weight', label: 'lbs', value: row.actual_weight };
-  if (e.requires_distance && row.actual_distance != null)
-    return { key: 'distance', label: e.distance_unit, value: row.actual_distance };
-  if (e.requires_duration && row.actual_duration_seconds != null)
-    return { key: 'duration_seconds', label: 'sec', value: row.actual_duration_seconds };
-  if (e.requires_reps && row.actual_reps != null) return { key: 'reps', label: 'reps', value: row.actual_reps };
-  return null;
-}
-
 export default function WorkoutsScreen() {
   const { athleteId, athleteName } = useLocalSearchParams<{ athleteId: string; athleteName: string }>();
   const router = useRouter();
 
-  const [tab, setTab] = useState<'calendar' | 'analytics'>('calendar');
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [loading, setLoading] = useState(true);
   const [canLogSessions, setCanLogSessions] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [dateRange, setDateRange] = useState('all-time');
-  const [selectedExerciseId, setSelectedExerciseId] = useState<number | null>(null);
   const hasLoadedOnceRef = useRef(false);
 
   const fetchWorkouts = useCallback(async () => {
@@ -113,6 +77,20 @@ export default function WorkoutsScreen() {
     useCallback(() => {
       fetchWorkouts();
     }, [fetchWorkouts])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+        await supabase
+          .from('workout_views')
+          .upsert({ user_id: user.id, athlete_id: athleteId, last_viewed_at: new Date().toISOString() });
+      })();
+    }, [athleteId])
   );
 
   useFocusEffect(
@@ -170,69 +148,6 @@ export default function WorkoutsScreen() {
     [workouts, selectedDate]
   );
 
-  const filteredWorkouts = useMemo(() => {
-    const cutoff = cutoffDate(dateRange);
-    if (!cutoff) return workouts;
-    return workouts.filter((w) => new Date(w.scheduled_date + 'T00:00:00') >= cutoff);
-  }, [workouts, dateRange]);
-
-  const complianceTotals = useMemo(() => {
-    const total = filteredWorkouts.length;
-    const completed = filteredWorkouts.filter((w) => w.status === 'completed').length;
-    const missed = filteredWorkouts.filter((w) => w.status === 'missed').length;
-    const scheduled = filteredWorkouts.filter((w) => w.status === 'scheduled').length;
-    const reasonCounts: Record<string, number> = {};
-    filteredWorkouts
-      .filter((w) => w.status === 'missed')
-      .forEach((w) => {
-        const chip = MISSED_REASON_CHIPS.find((c) => w.missed_reason?.startsWith(c)) ?? 'Other';
-        reasonCounts[chip] = (reasonCounts[chip] ?? 0) + 1;
-      });
-    return { total, completed, missed, scheduled, reasonCounts };
-  }, [filteredWorkouts]);
-
-  const loggedExercises = useMemo(() => {
-    const map = new Map<number, string>();
-    filteredWorkouts.forEach((w) => {
-      w.workout_exercises.forEach((we) => {
-        if (primaryMetric(we)) map.set(we.exercise_id, we.exercises.name);
-      });
-    });
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [filteredWorkouts]);
-
-  const progressData = useMemo(() => {
-    if (!selectedExerciseId) return { label: '', points: [] as { date: string; value: number }[] };
-    const byDate = new Map<string, number>();
-    let unitLabel = '';
-    filteredWorkouts.forEach((w) => {
-      w.workout_exercises
-        .filter((we) => we.exercise_id === selectedExerciseId)
-        .forEach((we) => {
-          const m = primaryMetric(we);
-          if (!m) return;
-          unitLabel = m.label;
-          const existing = byDate.get(w.scheduled_date);
-          if (existing === undefined || m.value > existing) byDate.set(w.scheduled_date, m.value);
-        });
-    });
-    const points = Array.from(byDate.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, value]) => ({ date, value }));
-    return { label: unitLabel, points };
-  }, [filteredWorkouts, selectedExerciseId]);
-
-  const screenWidth = Dimensions.get('window').width - 40;
-  const chartConfig = {
-    backgroundColor: '#fff',
-    backgroundGradientFrom: '#fff',
-    backgroundGradientTo: '#fff',
-    decimalPlaces: 0,
-    color: (opacity = 1) => `rgba(76, 155, 232, ${opacity})`,
-    labelColor: (opacity = 1) => `rgba(100, 100, 100, ${opacity})`,
-    barPercentage: 0.6,
-  };
-
   const goAssign = (date?: string) => {
     router.push({
       pathname: '/workout-assign',
@@ -246,21 +161,6 @@ export default function WorkoutsScreen() {
         <Text style={styles.title}>Workouts</Text>
         <Text style={styles.athleteName}>{athleteName}</Text>
 
-        <View style={styles.toggleRow}>
-          <Pressable
-            style={[styles.togglePill, tab === 'calendar' && styles.togglePillActive]}
-            onPress={() => setTab('calendar')}
-          >
-            <Text style={[styles.toggleText, tab === 'calendar' && styles.toggleTextActive]}>Calendar</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.togglePill, tab === 'analytics' && styles.togglePillActive]}
-            onPress={() => setTab('analytics')}
-          >
-            <Text style={[styles.toggleText, tab === 'analytics' && styles.toggleTextActive]}>Analytics</Text>
-          </Pressable>
-        </View>
-
         {canLogSessions && (
           <Pressable style={styles.assignButton} onPress={() => goAssign()}>
             <Text style={styles.assignButtonText}>+ Assign Workout</Text>
@@ -269,7 +169,7 @@ export default function WorkoutsScreen() {
 
         {loading ? (
           <ActivityIndicator style={{ marginVertical: 20 }} />
-        ) : tab === 'calendar' ? (
+        ) : (
           <>
             <Calendar
               markingType="dot"
@@ -282,102 +182,6 @@ export default function WorkoutsScreen() {
               <LegendDot color={STATUS_COLOR.completed} label="Completed" />
               <LegendDot color={STATUS_COLOR.missed} label="Missed" />
             </View>
-          </>
-        ) : (
-          <>
-            <View style={styles.filterRow}>
-              {DATE_RANGES.map((r) => (
-                <Pressable
-                  key={r.key}
-                  style={[styles.filterPill, dateRange === r.key && styles.filterPillActive]}
-                  onPress={() => setDateRange(r.key)}
-                >
-                  <Text style={[styles.filterPillText, dateRange === r.key && styles.filterPillTextActive]}>
-                    {r.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Text style={styles.chartTitle}>Compliance</Text>
-            <View style={styles.statCard}>
-              <Text style={styles.statCardTotal}>{complianceTotals.total}</Text>
-              <Text style={styles.statCardTotalLabel}>Workouts in Range</Text>
-              <View style={styles.statCardRow}>
-                <View style={styles.statCardItem}>
-                  <Text style={[styles.statCardNumber, { color: STATUS_COLOR.completed }]}>
-                    {complianceTotals.completed}
-                  </Text>
-                  <Text style={styles.statCardLabel}>Completed</Text>
-                </View>
-                <View style={styles.statCardItem}>
-                  <Text style={[styles.statCardNumber, { color: STATUS_COLOR.missed }]}>
-                    {complianceTotals.missed}
-                  </Text>
-                  <Text style={styles.statCardLabel}>Missed</Text>
-                </View>
-                <View style={styles.statCardItem}>
-                  <Text style={[styles.statCardNumber, { color: STATUS_COLOR.scheduled }]}>
-                    {complianceTotals.scheduled}
-                  </Text>
-                  <Text style={styles.statCardLabel}>Scheduled</Text>
-                </View>
-              </View>
-              {complianceTotals.missed > 0 && (
-                <View style={styles.statCardCNote}>
-                  <Text style={styles.statCardCNoteText}>
-                    Missed reasons:{' '}
-                    {Object.entries(complianceTotals.reasonCounts)
-                      .map(([reason, count]) => `${reason} (${count})`)
-                      .join('  ·  ')}
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            <Text style={styles.chartTitle}>Exercise Progress</Text>
-            {loggedExercises.length === 0 ? (
-              <Text style={styles.emptyText}>Log actual values on some exercises to see progress here.</Text>
-            ) : (
-              <>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
-                  {loggedExercises.map((e) => (
-                    <Pressable
-                      key={e.id}
-                      style={[styles.categoryPill, selectedExerciseId === e.id && styles.filterPillActive]}
-                      onPress={() => setSelectedExerciseId(e.id)}
-                    >
-                      <Text
-                        style={[
-                          styles.filterPillText,
-                          selectedExerciseId === e.id && styles.filterPillTextActive,
-                        ]}
-                      >
-                        {e.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-
-                {selectedExerciseId && progressData.points.length > 0 && (
-                  <LineChart
-                    data={{
-                      labels: progressData.points.map((p) => {
-                        const d = new Date(p.date + 'T00:00:00');
-                        return `${d.getMonth() + 1}/${d.getDate()}`;
-                      }),
-                      datasets: [{ data: progressData.points.map((p) => p.value) }],
-                    }}
-                    width={screenWidth}
-                    height={180}
-                    yAxisSuffix={` ${progressData.label}`}
-                    chartConfig={chartConfig}
-                    bezier
-                    style={styles.chart}
-                  />
-                )}
-              </>
-            )}
           </>
         )}
       </ScrollView>
@@ -783,40 +587,7 @@ const styles = StyleSheet.create({
   legendDot: { width: 8, height: 8, borderRadius: 4 },
   legendLabel: { fontSize: 12, color: '#666' },
 
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
-  filterPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: '#ddd' },
-  filterPillActive: { backgroundColor: '#4C9BE8', borderColor: '#4C9BE8' },
-  filterPillText: { fontSize: 12, color: '#444' },
-  filterPillTextActive: { color: '#fff', fontWeight: '600' },
-  chartTitle: { fontSize: 13, fontWeight: '600', color: '#333', marginTop: 14, marginBottom: 8 },
-  chart: { borderRadius: 12, borderWidth: 1, borderColor: '#eee', marginTop: 10 },
   emptyText: { fontSize: 14, color: '#aaa', textAlign: 'center', marginVertical: 20 },
-
-  statCard: { backgroundColor: '#f7f8fa', borderRadius: 14, padding: 18, alignItems: 'center', marginBottom: 10 },
-  statCardTotal: { fontSize: 32, fontWeight: 'bold', color: '#333' },
-  statCardTotalLabel: {
-    fontSize: 12,
-    color: '#888',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 16,
-  },
-  statCardRow: { flexDirection: 'row', justifyContent: 'space-around', width: '100%' },
-  statCardItem: { alignItems: 'center' },
-  statCardNumber: { fontSize: 24, fontWeight: 'bold' },
-  statCardLabel: { fontSize: 12, color: '#666', marginTop: 2 },
-  statCardCNote: { width: '100%', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#eee' },
-  statCardCNoteText: { fontSize: 12, color: '#888', textAlign: 'center', lineHeight: 17 },
-
-  categoryScroll: { marginBottom: 12, flexGrow: 0 },
-  categoryPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    marginRight: 8,
-  },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalContent: {

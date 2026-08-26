@@ -1,6 +1,6 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabase';
@@ -35,10 +35,91 @@ export default function AthleteListScreen() {
   const [saving, setSaving] = useState(false);
   const [profileName, setProfileName] = useState('');
   const [editingName, setEditingName] = useState(false);
+  const [newWorkoutCounts, setNewWorkoutCounts] = useState<Record<number, number>>({});
+  const [newMessageCounts, setNewMessageCounts] = useState<Record<number, number>>({});
 
   useEffect(() => {
     fetchAthletes();
   }, []);
+
+  const fetchNewWorkoutCounts = useCallback(async (athleteList: Athlete[]) => {
+    if (athleteList.length === 0) {
+      setNewWorkoutCounts({});
+      return;
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const athleteIds = athleteList.map((a) => a.id);
+    const { data: views } = await supabase
+      .from('workout_views')
+      .select('athlete_id, last_viewed_at')
+      .eq('user_id', user.id)
+      .in('athlete_id', athleteIds);
+
+    const viewedAt = new Map<number, string>((views ?? []).map((v) => [v.athlete_id, v.last_viewed_at]));
+
+    const { data: workouts } = await supabase
+      .from('workouts')
+      .select('athlete_id, created_at')
+      .in('athlete_id', athleteIds);
+
+    const counts: Record<number, number> = {};
+    (workouts ?? []).forEach((w) => {
+      const cutoff = viewedAt.get(w.athlete_id);
+      // No view row yet means this user has never opened that athlete's
+      // Workouts screen - everything counts as new until they do, once.
+      if (!cutoff || w.created_at > cutoff) {
+        counts[w.athlete_id] = (counts[w.athlete_id] ?? 0) + 1;
+      }
+    });
+    setNewWorkoutCounts(counts);
+  }, []);
+
+  const fetchNewMessageCounts = useCallback(async (athleteList: Athlete[]) => {
+    if (athleteList.length === 0) {
+      setNewMessageCounts({});
+      return;
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const athleteIds = athleteList.map((a) => a.id);
+    const { data: views } = await supabase
+      .from('message_views')
+      .select('athlete_id, last_viewed_at')
+      .eq('user_id', user.id)
+      .in('athlete_id', athleteIds);
+
+    const viewedAt = new Map<number, string>((views ?? []).map((v) => [v.athlete_id, v.last_viewed_at]));
+
+    const { data: messages } = await supabase
+      .from('messages')
+      .select('athlete_id, created_at')
+      .in('athlete_id', athleteIds);
+
+    const counts: Record<number, number> = {};
+    (messages ?? []).forEach((m) => {
+      const cutoff = viewedAt.get(m.athlete_id);
+      if (!cutoff || m.created_at > cutoff) {
+        counts[m.athlete_id] = (counts[m.athlete_id] ?? 0) + 1;
+      }
+    });
+    setNewMessageCounts(counts);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (athletes.length > 0) {
+        fetchNewWorkoutCounts(athletes);
+        fetchNewMessageCounts(athletes);
+      }
+    }, [athletes, fetchNewWorkoutCounts, fetchNewMessageCounts])
+  );
 
   const fetchAthletes = async () => {
     setLoading(true);
@@ -163,7 +244,23 @@ export default function AthleteListScreen() {
             style={styles.athleteRow}
             onPress={() => router.push({ pathname: '/athlete', params: { id: item.id, name: item.name } })}
           >
-            <Text style={styles.athleteName}>{item.name}</Text>
+            <View style={styles.athleteRowHeader}>
+              <Text style={styles.athleteName}>{item.name}</Text>
+              {!!newWorkoutCounts[item.id] && (
+                <View style={styles.newBadge}>
+                  <Text style={styles.newBadgeText}>
+                    {newWorkoutCounts[item.id]} new workout{newWorkoutCounts[item.id] === 1 ? '' : 's'}
+                  </Text>
+                </View>
+              )}
+              {!!newMessageCounts[item.id] && (
+                <View style={styles.newMessageBadge}>
+                  <Text style={styles.newBadgeText}>
+                    {newMessageCounts[item.id]} new message{newMessageCounts[item.id] === 1 ? '' : 's'}
+                  </Text>
+                </View>
+              )}
+            </View>
             {calculateAge(item.birthdate) !== null && (
               <Text style={styles.athleteAge}>Age {calculateAge(item.birthdate)}</Text>
             )}
@@ -269,10 +366,14 @@ logoutButtonText: {
     borderRadius: 10,
     marginBottom: 10,
   },
+  athleteRowHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   athleteName: {
     fontSize: 18,
   },
   athleteAge: { fontSize: 13, color: '#888', marginTop: 2 },
+  newBadge: { backgroundColor: '#D6524F', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  newMessageBadge: { backgroundColor: '#4C9BE8', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  newBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   emptyText: {
     fontSize: 16,
     color: '#888',

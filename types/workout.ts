@@ -181,3 +181,20 @@ export function describeTargets(row: WorkoutExerciseRow): string {
 export function randomGroupId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
+
+// The single most representative logged number for an exercise's progress
+// chart - weight for a lift, distance for a throw, duration for a hold,
+// reps as the fallback for bodyweight work. Shared so the Workouts and
+// Athlete-tab analytics can't quietly diverge on what "progress" means.
+export function primaryMetric(
+  row: WorkoutExerciseRow
+): { key: ExerciseFieldKey; label: string; value: number } | null {
+  const e = row.exercises;
+  if (e.requires_weight && row.actual_weight != null) return { key: 'weight', label: 'lbs', value: row.actual_weight };
+  if (e.requires_distance && row.actual_distance != null)
+    return { key: 'distance', label: e.distance_unit, value: row.actual_distance };
+  if (e.requires_duration && row.actual_duration_seconds != null)
+    return { key: 'duration_seconds', label: 'sec', value: row.actual_duration_seconds };
+  if (e.requires_reps && row.actual_reps != null) return { key: 'reps', label: 'reps', value: row.actual_reps };
+  return null;
+}
