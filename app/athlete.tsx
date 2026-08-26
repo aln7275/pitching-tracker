@@ -468,14 +468,12 @@ export default function AthleteHomeScreen() {
                   bezier
                   style={styles.chart}
                 />
-
-                <Text style={styles.chartTitle}>T / C / N Breakdown</Text>
+<Text style={styles.chartTitle}>T / C / N Breakdown</Text>
                 <TCNBarChart totals={tcnTotals} />
-
-                <Text style={styles.chartTitle}>Batters Faced Outcomes</Text>
-                <View style={styles.statCard}>
-                  <Text style={styles.statCardTotal}>{battersFacedTotals.battersFaced}</Text>
-                  <Text style={styles.statCardTotalLabel}>Batters Faced</Text>
+                <Text style={styles.chartTitle}>Simulated Batters Faced</Text>
+<View style={styles.statCard}>
+  <Text style={styles.statCardTotal}>{battersFacedTotals.battersFaced}</Text>
+  <Text style={styles.statCardTotalLabel}>Simulated Batters Faced</Text>
 
                   <View style={styles.statCardRow}>
                     <View style={styles.statCardItem}>
@@ -485,13 +483,7 @@ export default function AthleteHomeScreen() {
                       <Text style={styles.statCardLabel}>Ks</Text>
                       <Text style={styles.statCardSubtext}>{battersFacedTotals.kPct}%</Text>
                     </View>
-                    <View style={styles.statCardItem}>
-                      <Text style={[styles.statCardNumber, { color: '#94A3B8' }]}>
-                        {battersFacedTotals.hits}
-                      </Text>
-                      <Text style={styles.statCardLabel}>Hits</Text>
-                      <Text style={styles.statCardSubtext}>{battersFacedTotals.hitsPct}%</Text>
-                    </View>
+                    
                     <View style={styles.statCardItem}>
                       <Text style={[styles.statCardNumber, { color: '#D6524F' }]}>
                         {battersFacedTotals.bb}
