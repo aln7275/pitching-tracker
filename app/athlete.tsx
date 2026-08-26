@@ -45,8 +45,10 @@ function summarize(pitches: { outcome: string }[]) {
 
   let strikes = 0, balls = 0, k = 0, bb = 0;
   pitches.forEach((p) => {
-    if (p.outcome === 'T' || p.outcome === 'C') strikes++;
-    else balls++;
+    // C is neutral: a competitive pitch is close enough to be hittable, so it
+    // shouldn't auto-resolve as either a strike or a ball in the simulation.
+    if (p.outcome === 'T') strikes++;
+    else if (p.outcome === 'N') balls++;
     if (strikes >= 3) { k++; strikes = 0; balls = 0; }
     else if (balls >= 4) { bb++; strikes = 0; balls = 0; }
   });
@@ -57,14 +59,18 @@ function summarize(pitches: { outcome: string }[]) {
 async function shareSession(item: Session) {
   const s = summarize(item.pitches);
   const battersFaced = s.k + s.bb;
+  const battersFacedLine =
+    battersFaced === 0 && s.total > 0
+      ? `Batters Faced: 0 (all pitches were Competitive — no simulated K/BB)\n`
+      : `Batters Faced: ${battersFaced}\n` + `K: ${s.k}  BB: ${s.bb}\n`;
   const message =
     `Bullpen Session — ${item.session_date}\n` +
     `${item.session_type}${item.bullpen_subtype ? ' · ' + item.bullpen_subtype : ''}\n\n` +
     `Pitches: ${s.total}\n` +
     `T: ${s.counts.T}  C: ${s.counts.C}  N: ${s.counts.N}\n` +
     `Target %: ${s.targetPct}%\n\n` +
-    `Batters Faced: ${battersFaced}\n` +
-    `K: ${s.k}  BB: ${s.bb}` +
+    battersFacedLine +
+    `Competitive pitches: ${s.counts.C} (neutral — don't count toward K/BB)` +
     (item.notes ? `\n\nNotes: ${item.notes}` : '');
 
   try {
@@ -414,6 +420,15 @@ export default function AthleteHomeScreen() {
             <Pressable
               style={styles.secondaryButton}
               onPress={() =>
+                router.push({ pathname: '/workouts', params: { athleteId: id, athleteName: name } })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>Workouts</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() =>
                 router.push({ pathname: '/athlete-access', params: { athleteId: id, athleteName: name } })
               }
             >
@@ -471,26 +486,43 @@ export default function AthleteHomeScreen() {
 <Text style={styles.chartTitle}>T / C / N Breakdown</Text>
                 <TCNBarChart totals={tcnTotals} />
                 <Text style={styles.chartTitle}>Simulated Batters Faced</Text>
-<View style={styles.statCard}>
-  <Text style={styles.statCardTotal}>{battersFacedTotals.battersFaced}</Text>
-  <Text style={styles.statCardTotalLabel}>Simulated Batters Faced</Text>
+                <View style={styles.statCard}>
+                  {battersFacedTotals.battersFaced === 0 && tcnTotals.T + tcnTotals.C + tcnTotals.N > 0 ? (
+                    <>
+                      <Text style={styles.statCardTotal}>—</Text>
+                      <Text style={styles.statCardTotalLabel}>No Simulated At-Bats Yet</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.statCardTotal}>{battersFacedTotals.battersFaced}</Text>
+                      <Text style={styles.statCardTotalLabel}>Simulated Batters Faced</Text>
 
-                  <View style={styles.statCardRow}>
-                    <View style={styles.statCardItem}>
-                      <Text style={[styles.statCardNumber, { color: '#3FB98A' }]}>
-                        {battersFacedTotals.k}
-                      </Text>
-                      <Text style={styles.statCardLabel}>Ks</Text>
-                      <Text style={styles.statCardSubtext}>{battersFacedTotals.kPct}%</Text>
-                    </View>
-                    
-                    <View style={styles.statCardItem}>
-                      <Text style={[styles.statCardNumber, { color: '#D6524F' }]}>
-                        {battersFacedTotals.bb}
-                      </Text>
-                      <Text style={styles.statCardLabel}>BB</Text>
-                      <Text style={styles.statCardSubtext}>{battersFacedTotals.bbPct}%</Text>
-                    </View>
+                      <View style={styles.statCardRow}>
+                        <View style={styles.statCardItem}>
+                          <Text style={[styles.statCardNumber, { color: '#3FB98A' }]}>
+                            {battersFacedTotals.k}
+                          </Text>
+                          <Text style={styles.statCardLabel}>Ks</Text>
+                          <Text style={styles.statCardSubtext}>{battersFacedTotals.kPct}%</Text>
+                        </View>
+
+                        <View style={styles.statCardItem}>
+                          <Text style={[styles.statCardNumber, { color: '#D6524F' }]}>
+                            {battersFacedTotals.bb}
+                          </Text>
+                          <Text style={styles.statCardLabel}>BB</Text>
+                          <Text style={styles.statCardSubtext}>{battersFacedTotals.bbPct}%</Text>
+                        </View>
+                      </View>
+                    </>
+                  )}
+
+                  <View style={styles.statCardCNote}>
+                    <Text style={styles.statCardCNoteText}>
+                      <Text style={styles.statCardCNoteNumber}>{tcnTotals.C}</Text> Competitive
+                      pitch{tcnTotals.C === 1 ? '' : 'es'} thrown — close misses, neutral in this
+                      model (don't count toward K/BB)
+                    </Text>
                   </View>
                 </View>
               </>
@@ -683,6 +715,15 @@ const styles = StyleSheet.create({
   statCardNumber: { fontSize: 24, fontWeight: 'bold' },
   statCardLabel: { fontSize: 12, color: '#666', marginTop: 2 },
   statCardSubtext: { fontSize: 12, color: '#999', marginTop: 2 },
+  statCardCNote: {
+    width: '100%',
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  statCardCNoteText: { fontSize: 12, color: '#888', textAlign: 'center', lineHeight: 17 },
+  statCardCNoteNumber: { color: '#E8A93B', fontWeight: '700' },
 
   sessionRow: { borderWidth: 1, borderColor: '#eee', borderRadius: 10, padding: 14, marginBottom: 10 },
   shareButton: { alignSelf: 'flex-start', marginTop: 8, marginBottom: 4 },

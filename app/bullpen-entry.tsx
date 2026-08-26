@@ -20,8 +20,10 @@ function simulateBatters(pitches: Pitch[]) {
 
   for (const p of pitches) {
     seq.push(p.outcome);
-    if (p.outcome === 'T' || p.outcome === 'C') strikes++;
-    else balls++;
+    // C is neutral: a competitive pitch is close enough to be hittable, so it
+    // shouldn't auto-resolve as either a strike or a ball in the simulation.
+    if (p.outcome === 'T') strikes++;
+    else if (p.outcome === 'N') balls++;
 
     if (strikes >= 3) {
       k++;
