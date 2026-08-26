@@ -155,6 +155,34 @@ export default function WorkoutsScreen() {
     });
   };
 
+  const cancelAllUpcoming = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const upcoming = workouts.filter((w) => w.status === 'scheduled' && w.scheduled_date >= today);
+
+    if (upcoming.length === 0) {
+      Alert.alert('Nothing to cancel', 'There are no upcoming scheduled workouts.');
+      return;
+    }
+
+    Alert.alert(
+      'Cancel all upcoming workouts?',
+      `This will permanently delete ${upcoming.length} upcoming scheduled workout${
+        upcoming.length === 1 ? '' : 's'
+      } for ${athleteName}. Completed and missed workouts are not affected. This cannot be undone.`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel All',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.from('workouts').delete().in('id', upcoming.map((w) => w.id));
+            fetchWorkouts();
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
@@ -164,6 +192,12 @@ export default function WorkoutsScreen() {
         {canLogSessions && (
           <Pressable style={styles.assignButton} onPress={() => goAssign()}>
             <Text style={styles.assignButtonText}>+ Assign Workout</Text>
+          </Pressable>
+        )}
+
+        {canLogSessions && (
+          <Pressable style={styles.cancelAllButton} onPress={cancelAllUpcoming}>
+            <Text style={styles.cancelAllButtonText}>Cancel All Upcoming Workouts</Text>
           </Pressable>
         )}
 
@@ -416,6 +450,45 @@ function WorkoutCard({
     ]);
   };
 
+  const cancelSeries = async () => {
+    const groupId = workout.recurrence_group_id;
+    if (!groupId) return;
+    const today = new Date().toISOString().split('T')[0];
+
+    const { count } = await supabase
+      .from('workouts')
+      .select('id', { count: 'exact', head: true })
+      .eq('recurrence_group_id', groupId)
+      .eq('status', 'scheduled')
+      .gte('scheduled_date', today);
+
+    if (!count) {
+      Alert.alert('Nothing to cancel', 'No remaining scheduled workouts in this series.');
+      return;
+    }
+
+    Alert.alert(
+      'Cancel remaining series?',
+      `This will permanently delete ${count} remaining scheduled workout${count === 1 ? '' : 's'} in this series. Already completed or missed days aren't affected. This cannot be undone.`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel Series',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase
+              .from('workouts')
+              .delete()
+              .eq('recurrence_group_id', groupId)
+              .eq('status', 'scheduled')
+              .gte('scheduled_date', today);
+            onChanged();
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={styles.dayCard}>
       <View style={styles.dayCardHeader}>
@@ -543,6 +616,11 @@ function WorkoutCard({
           <Pressable style={styles.smallActionButton} onPress={deleteWorkout}>
             <Text style={styles.deleteText}>Delete</Text>
           </Pressable>
+          {workout.recurrence_group_id && (
+            <Pressable style={styles.smallActionButton} onPress={cancelSeries}>
+              <Text style={styles.deleteText}>Cancel Series</Text>
+            </Pressable>
+          )}
         </View>
       )}
     </View>
@@ -582,6 +660,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   assignButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  cancelAllButton: {
+    borderWidth: 1,
+    borderColor: '#D6524F',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  cancelAllButtonText: { color: '#D6524F', fontSize: 13, fontWeight: '600' },
   legendRow: { flexDirection: 'row', gap: 16, justifyContent: 'center', marginTop: 12 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
