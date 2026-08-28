@@ -33,7 +33,7 @@ export default function LoginScreen() {
     }
 
     setLoading(false);
-    router.replace('/athletes');
+    router.replace('/home');
   };
 
   return (

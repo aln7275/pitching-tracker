@@ -98,6 +98,56 @@ export function formatIP(outs: number): string {
   return `${Math.floor(outs / 3)}.${outs % 3}`;
 }
 
+export function formatStat(n: number | null): string {
+  return n === null ? '—' : n.toFixed(2);
+}
+
+export type BatterResult = 'K' | 'BB' | 'HBP' | 'Hit' | 'Out';
+
+export type BatterLine = {
+  seq: GamePitchOutcome[];
+  result: BatterResult | null; // null = at-bat still in progress
+};
+
+// Same walk as deriveCounts, but keeps each batter's own pitch sequence
+// instead of collapsing to totals - powers the expandable batter-by-batter
+// log, mirroring the bullpen entry screen's simulated-batter log.
+export function groupBatters(outcomes: GamePitchOutcome[]): BatterLine[] {
+  const batters: BatterLine[] = [];
+  let seq: GamePitchOutcome[] = [];
+  let balls = 0;
+  let strikes = 0;
+
+  const closeBatter = (result: BatterResult) => {
+    batters.push({ seq, result });
+    seq = [];
+    balls = 0;
+    strikes = 0;
+  };
+
+  outcomes.forEach((outcome) => {
+    seq.push(outcome);
+    if (outcome === 'strike') {
+      strikes++;
+      if (strikes >= 3) closeBatter('K');
+    } else if (outcome === 'foul') {
+      if (strikes < 2) strikes++;
+    } else if (outcome === 'ball') {
+      balls++;
+      if (balls >= 4) closeBatter('BB');
+    } else if (outcome === 'hbp') {
+      closeBatter('HBP');
+    } else if (outcome === 'hit') {
+      closeBatter('Hit');
+    } else if (outcome === 'out') {
+      closeBatter('Out');
+    }
+  });
+
+  if (seq.length > 0) batters.push({ seq, result: null });
+  return batters;
+}
+
 // Each inning's pitch sequence is replayed *independently* and the resulting
 // counts summed, rather than concatenating every inning's pitches into one
 // long sequence - an inning that was closed out mid-at-bat (pulled with a

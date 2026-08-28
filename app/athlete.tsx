@@ -4,8 +4,9 @@ import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { ChatIcon, PencilIcon } from '../components/Icons';
+import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
-import { GameSession, gameSessionStats } from '../types/game';
+import { GameSession, formatStat, gameSessionStats } from '../types/game';
 import { MISSED_REASON_CHIPS, Workout, primaryMetric } from '../types/workout';
 
 type Session = {
@@ -108,10 +109,6 @@ function cutoffDate(range: string): Date | null {
   else if (range === '1m') d.setMonth(d.getMonth() - 1);
   else return null;
   return d;
-}
-
-function formatStat(n: number | null): string {
-  return n === null ? '—' : n.toFixed(2);
 }
 
 function calculateAge(birthdate: string | null): number | null {
@@ -671,6 +668,7 @@ export default function AthleteHomeScreen() {
 
   return (
     <View style={styles.container}>
+      <HomeButton />
       <FlatList
         data={activeType === 'bullpen' ? sessions : []}
         keyExtractor={(item) => item.id.toString()}

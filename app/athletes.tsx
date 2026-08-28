@@ -2,6 +2,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { HomeIcon } from '../components/Icons';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabase';
 
@@ -199,7 +200,10 @@ export default function AthleteListScreen() {
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Athletes</Text>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
+        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+          <Pressable onPress={() => router.push('/home')} hitSlop={8}>
+            <HomeIcon color="#4C9BE8" size={20} />
+          </Pressable>
           <Pressable style={styles.addButton} onPress={() => setModalVisible(true)}>
             <Text style={styles.addButtonText}>+ Add</Text>
           </Pressable>

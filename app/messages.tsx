@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BackArrowIcon, SendIcon } from '../components/Icons';
+import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
 
 type Message = {
@@ -181,6 +182,7 @@ export default function MessagesScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={10}
     >
+      <HomeButton />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.backButton}>
           <BackArrowIcon color="#333" size={20} />

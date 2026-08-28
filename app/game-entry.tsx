@@ -1,10 +1,69 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, Share, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
-import { GamePitch, GamePitchOutcome, deriveCounts } from '../types/game';
+import {
+  BatterLine,
+  GamePitch,
+  GamePitchOutcome,
+  GameSession,
+  deriveCounts,
+  formatStat,
+  gameSessionStats,
+  groupBatters,
+} from '../types/game';
 
-type InningLogRow = { number: number; pitches: number; outs: number; runs: number; earnedRuns: number };
+type InningLogRow = {
+  number: number;
+  pitches: GamePitchOutcome[];
+  outs: number;
+  runs: number;
+  earnedRuns: number;
+};
+
+const OUTCOME_LETTER: Record<GamePitchOutcome, string> = {
+  strike: 'S',
+  ball: 'B',
+  foul: 'F',
+  hbp: 'HP',
+  hit: 'H',
+  out: 'O',
+};
+
+const OUTCOME_COLOR: Record<GamePitchOutcome, string> = {
+  strike: '#3FB98A',
+  ball: '#D6524F',
+  foul: '#E8A93B',
+  hbp: '#C23B38',
+  hit: '#C23B38',
+  out: '#2F9C71',
+};
+
+function BatterRow({ batter, index, detailed }: { batter: BatterLine; index: number; detailed: boolean }) {
+  if (!detailed) {
+    return (
+      <View style={styles.compactBatterRow}>
+        <Text style={styles.compactBatterText}>
+          Batter {index + 1} — {batter.result ?? 'At bat...'}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.batterRow}>
+      <Text style={styles.batterNum}>{index + 1}</Text>
+      <View style={styles.batterSeq}>
+        {batter.seq.map((o, i) => (
+          <Text key={i} style={[styles.seqDot, { color: OUTCOME_COLOR[o] }]}>
+            {OUTCOME_LETTER[o]}
+          </Text>
+        ))}
+      </View>
+      <Text style={styles.batterResult}>{batter.result ?? '...'}</Text>
+    </View>
+  );
+}
 
 export default function GameEntryScreen() {
   const { athleteId, athleteName, sessionDate, gameSubtype, opponent, resumeSessionId } = useLocalSearchParams<{
@@ -27,6 +86,9 @@ export default function GameEntryScreen() {
   const [earnedRunsInput, setEarnedRunsInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [resuming, setResuming] = useState(!!resumeSessionId);
+  const [showDetail, setShowDetail] = useState(false);
+  const [expandedInning, setExpandedInning] = useState<number | null>(null);
+  const [showRecap, setShowRecap] = useState(false);
 
   useEffect(() => {
     if (!resumeSessionId) return;
@@ -43,10 +105,16 @@ export default function GameEntryScreen() {
         return;
       }
 
-      const rows = data as unknown as { inning_number: number; total_runs: number; earned_runs: number; game_pitches: GamePitch[] }[];
-      const log = rows.map((i) => {
-        const c = deriveCounts(i.game_pitches.map((p) => p.outcome));
-        return { number: i.inning_number, pitches: c.pitchCount, outs: c.outs, runs: i.total_runs, earnedRuns: i.earned_runs };
+      const rows = data as unknown as {
+        inning_number: number;
+        total_runs: number;
+        earned_runs: number;
+        game_pitches: GamePitch[];
+      }[];
+      const log: InningLogRow[] = rows.map((i) => {
+        const sortedPitches = [...i.game_pitches].sort((a, b) => a.pitch_order - b.pitch_order).map((p) => p.outcome);
+        const c = deriveCounts(sortedPitches);
+        return { number: i.inning_number, pitches: sortedPitches, outs: c.outs, runs: i.total_runs, earnedRuns: i.earned_runs };
       });
       const maxInning = rows.reduce((max, i) => Math.max(max, i.inning_number), 0);
 
@@ -58,6 +126,11 @@ export default function GameEntryScreen() {
   }, [resumeSessionId]);
 
   const counts = useMemo(() => deriveCounts(events), [events]);
+  const currentBatters = useMemo(() => groupBatters(events), [events]);
+  const totalPitchCount = useMemo(
+    () => inningLog.reduce((sum, i) => sum + i.pitches.length, 0) + counts.pitchCount,
+    [inningLog, counts.pitchCount]
+  );
 
   const strikeLabel = counts.strikes === 0 ? 'Strike' : counts.strikes === 1 ? 'Strike 2' : 'Strike 3';
   const ballLabel =
@@ -71,6 +144,12 @@ export default function GameEntryScreen() {
   };
 
   const undo = () => setEvents((prev) => prev.slice(0, -1));
+
+  // Auto-prompt to close the inning once 3 outs are recorded - the End
+  // Inning button stays available too, for a mid-inning pull.
+  useEffect(() => {
+    if (counts.outs >= 3 && !showEndInning) setShowEndInning(true);
+  }, [counts.outs]);
 
   const ensureSession = async (): Promise<number> => {
     if (sessionId) return sessionId;
@@ -122,10 +201,7 @@ export default function GameEntryScreen() {
         if (pitchError) throw new Error(pitchError.message);
       }
 
-      setInningLog((prev) => [
-        ...prev,
-        { number: inningNumber, pitches: counts.pitchCount, outs: counts.outs, runs, earnedRuns: earned },
-      ]);
+      setInningLog((prev) => [...prev, { number: inningNumber, pitches: events, outs: counts.outs, runs, earnedRuns: earned }]);
       setEvents([]);
       setInningNumber((n) => n + 1);
       setShowEndInning(false);
@@ -136,6 +212,21 @@ export default function GameEntryScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const goHome = () => {
+    if (events.length === 0) {
+      router.push('/home');
+      return;
+    }
+    Alert.alert(
+      'Leave game?',
+      `You have ${events.length} pitch${events.length === 1 ? '' : 'es'} logged for the current inning that haven't been saved. Leaving now will discard them.`,
+      [
+        { text: 'Stay', style: 'cancel' },
+        { text: 'Discard & Leave', style: 'destructive', onPress: () => router.push('/home') },
+      ]
+    );
   };
 
   const finishOuting = () => {
@@ -169,7 +260,43 @@ export default function GameEntryScreen() {
       Alert.alert('Error finishing outing', error.message);
       return;
     }
-    router.push({ pathname: '/athlete', params: { id: athleteId, name: athleteName } });
+    setShowRecap(true);
+  };
+
+  const buildRecapSession = (): GameSession => ({
+    id: sessionId ?? 0,
+    athlete_id: Number(athleteId),
+    session_type: 'game',
+    game_subtype: (gameSubtype as 'practice' | 'live') ?? null,
+    opponent: opponent || null,
+    session_date: sessionDate,
+    notes: null,
+    status: 'submitted',
+    innings: inningLog.map((row) => ({
+      id: 0,
+      session_id: sessionId ?? 0,
+      inning_number: row.number,
+      total_runs: row.runs,
+      earned_runs: row.earnedRuns,
+      game_pitches: row.pitches.map((outcome, i) => ({ id: 0, inning_id: 0, outcome, pitch_order: i + 1 })),
+    })),
+  });
+
+  const shareRecap = async () => {
+    const stats = gameSessionStats(buildRecapSession());
+    const message =
+      `Game — ${sessionDate}\n` +
+      `${gameSubtype === 'practice' ? 'Practice/Scrimmage' : 'Live Game'}${opponent ? ' vs ' + opponent : ''}\n\n` +
+      `IP: ${stats.ip}   Pitches: ${stats.pitchCount}\n` +
+      `R: ${stats.runs}   ER: ${stats.earnedRuns}\n` +
+      `K: ${stats.k}   BB: ${stats.bb}   HBP: ${stats.hbp}   H: ${stats.hits}\n` +
+      `ERA: ${formatStat(stats.era)}   WHIP: ${formatStat(stats.whip)}\n` +
+      `Strike %: ${stats.strikePct}%`;
+    try {
+      await Share.share({ message });
+    } catch (err) {
+      console.log('Share error:', err);
+    }
   };
 
   if (resuming) {
@@ -181,8 +308,73 @@ export default function GameEntryScreen() {
     );
   }
 
+  if (showRecap) {
+    const stats = gameSessionStats(buildRecapSession());
+    return (
+      <View style={styles.container}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.athleteName}>{athleteName}</Text>
+          <Text style={styles.sessionMeta}>
+            {sessionDate} · {gameSubtype === 'practice' ? 'Practice/Scrimmage' : 'Live Game'}
+            {opponent ? ` · ${opponent}` : ''}
+          </Text>
+
+          <View style={styles.statusCard}>
+            <Text style={styles.pitchCountNumber}>{stats.ip}</Text>
+            <Text style={styles.pitchCountLabel}>Innings Pitched</Text>
+
+            <View style={[styles.statusRow, { marginTop: 18 }]}>
+              <View style={styles.statusItem}>
+                <Text style={[styles.statusNumber, { color: '#D6524F' }]}>{stats.runs}</Text>
+                <Text style={styles.statusItemLabel}>Runs</Text>
+              </View>
+              <View style={styles.statusItem}>
+                <Text style={styles.statusNumber}>{formatStat(stats.era)}</Text>
+                <Text style={styles.statusItemLabel}>ERA</Text>
+              </View>
+              <View style={styles.statusItem}>
+                <Text style={styles.statusNumber}>{formatStat(stats.whip)}</Text>
+                <Text style={styles.statusItemLabel}>WHIP</Text>
+              </View>
+            </View>
+
+            <View style={[styles.statusRow, { marginTop: 18 }]}>
+              <View style={styles.statusItem}>
+                <Text style={[styles.statusNumber, { color: '#3FB98A' }]}>{stats.k}</Text>
+                <Text style={styles.statusItemLabel}>K</Text>
+              </View>
+              <View style={styles.statusItem}>
+                <Text style={[styles.statusNumber, { color: '#D6524F' }]}>{stats.bb}</Text>
+                <Text style={styles.statusItemLabel}>BB</Text>
+              </View>
+              <View style={styles.statusItem}>
+                <Text style={styles.statusNumber}>{stats.hits}</Text>
+                <Text style={styles.statusItemLabel}>Hits</Text>
+              </View>
+              <View style={styles.statusItem}>
+                <Text style={styles.statusNumber}>{stats.pitchCount}</Text>
+                <Text style={styles.statusItemLabel}>Pitches</Text>
+              </View>
+            </View>
+          </View>
+
+          <Pressable style={styles.endInningButton} onPress={shareRecap}>
+            <Text style={styles.endInningButtonText}>Share</Text>
+          </Pressable>
+          <Pressable
+            style={styles.finishButton}
+            onPress={() => router.push({ pathname: '/athlete', params: { id: athleteId, name: athleteName } })}
+          >
+            <Text style={styles.finishButtonText}>Done</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
+      <HomeButton onPress={goHome} />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.athleteName}>{athleteName}</Text>
         <Text style={styles.sessionMeta}>
@@ -193,9 +385,13 @@ export default function GameEntryScreen() {
         <View style={styles.statusCard}>
           <View style={styles.statusHeader}>
             <Text style={styles.statusLabel}>Inning {inningNumber}</Text>
-            <Text style={styles.statusPitch}>Pitch {counts.pitchCount}</Text>
+            <Text style={styles.statusItemLabel}>This inning: {counts.pitchCount}</Text>
           </View>
-          <View style={styles.statusRow}>
+
+          <Text style={styles.pitchCountNumber}>{totalPitchCount}</Text>
+          <Text style={styles.pitchCountLabel}>Total Pitches</Text>
+
+          <View style={[styles.statusRow, { marginTop: 16 }]}>
             <View style={styles.statusItem}>
               <Text style={styles.statusNumber}>
                 {counts.balls}-{counts.strikes}
@@ -245,18 +441,42 @@ export default function GameEntryScreen() {
           <Text style={styles.finishButtonText}>Finish Outing</Text>
         </Pressable>
 
-        <Text style={styles.logTitle}>Inning Log</Text>
+        <View style={styles.logTitleRow}>
+          <Text style={styles.logTitle}>Batters This Inning</Text>
+          <Pressable onPress={() => setShowDetail((d) => !d)}>
+            <Text style={styles.detailToggle}>{showDetail ? 'Hide Detail' : 'Show Detail'}</Text>
+          </Pressable>
+        </View>
+        {currentBatters.length === 0 ? (
+          <Text style={styles.emptyText}>No batters faced yet this inning.</Text>
+        ) : (
+          currentBatters.map((b, i) => <BatterRow key={i} batter={b} index={i} detailed={showDetail} />)
+        )}
+
+        <Text style={[styles.logTitle, { marginTop: 20 }]}>Inning Log</Text>
         {inningLog.length === 0 ? (
           <Text style={styles.emptyText}>No innings closed out yet.</Text>
         ) : (
-          inningLog.map((inn) => (
-            <View key={inn.number} style={styles.logRow}>
-              <Text style={styles.logInning}>Inning {inn.number}</Text>
-              <Text style={styles.logDetail}>
-                {inn.pitches} pitches · {inn.outs} outs · {inn.runs} R ({inn.earnedRuns} ER)
-              </Text>
-            </View>
-          ))
+          inningLog.map((inn) => {
+            const expanded = expandedInning === inn.number;
+            return (
+              <View key={inn.number}>
+                <Pressable style={styles.logRow} onPress={() => setExpandedInning(expanded ? null : inn.number)}>
+                  <Text style={styles.logInning}>Inning {inn.number}</Text>
+                  <Text style={styles.logDetail}>
+                    {inn.pitches.length} pitches · {inn.outs} outs · {inn.runs} R ({inn.earnedRuns} ER)
+                  </Text>
+                </Pressable>
+                {expanded && (
+                  <View style={styles.expandedBatters}>
+                    {groupBatters(inn.pitches).map((b, i) => (
+                      <BatterRow key={i} batter={b} index={i} detailed />
+                    ))}
+                  </View>
+                )}
+              </View>
+            );
+          })
         )}
       </ScrollView>
 
@@ -337,13 +557,14 @@ const styles = StyleSheet.create({
   athleteName: { fontSize: 22, fontWeight: 'bold' },
   sessionMeta: { fontSize: 13, color: '#888', marginBottom: 20 },
 
-  statusCard: { backgroundColor: '#f7f8fa', borderRadius: 14, padding: 18, marginBottom: 16 },
-  statusHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
+  statusCard: { backgroundColor: '#f7f8fa', borderRadius: 14, padding: 18, marginBottom: 16, alignItems: 'center' },
+  statusHeader: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 6 },
   statusLabel: { fontSize: 13, fontWeight: '600', color: '#333' },
-  statusPitch: { fontSize: 13, color: '#666' },
-  statusRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  pitchCountNumber: { fontSize: 48, fontWeight: '800', color: '#333' },
+  pitchCountLabel: { fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5 },
+  statusRow: { flexDirection: 'row', justifyContent: 'space-around', width: '100%' },
   statusItem: { alignItems: 'center' },
-  statusNumber: { fontSize: 28, fontWeight: '700', color: '#333' },
+  statusNumber: { fontSize: 24, fontWeight: '700', color: '#333' },
   statusItemLabel: { fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 0.5 },
 
   buttonRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
@@ -362,11 +583,23 @@ const styles = StyleSheet.create({
   finishButton: { borderWidth: 1, borderColor: '#4C9BE8', borderRadius: 10, padding: 13, alignItems: 'center', marginBottom: 24 },
   finishButtonText: { color: '#4C9BE8', fontSize: 13, fontWeight: '600' },
 
-  logTitle: { fontSize: 13, fontWeight: '600', color: '#333', marginBottom: 4 },
+  logTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  logTitle: { fontSize: 13, fontWeight: '600', color: '#333' },
+  detailToggle: { fontSize: 12, color: '#4C9BE8', fontWeight: '600' },
   emptyText: { fontSize: 13, color: '#aaa', textAlign: 'center', paddingVertical: 16 },
+
+  compactBatterRow: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  compactBatterText: { fontSize: 13, color: '#444' },
+  batterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  batterNum: { fontSize: 11, color: '#999', width: 18 },
+  batterSeq: { flexDirection: 'row', gap: 4, flex: 1 },
+  seqDot: { fontSize: 12, fontWeight: 'bold' },
+  batterResult: { fontSize: 12, fontWeight: '600', color: '#666' },
+
   logRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#eee' },
   logInning: { fontSize: 13, color: '#333', fontWeight: '600' },
   logDetail: { fontSize: 12, color: '#666' },
+  expandedBatters: { backgroundColor: '#f7f8fa', borderRadius: 10, padding: 10, marginBottom: 8 },
 
   centerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: 30 },
   confirmCard: { backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%' },

@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { DurationInput } from '../components/DurationInput';
+import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
 import {
   ExerciseFieldKey,
@@ -185,6 +186,7 @@ export default function WorkoutsScreen() {
 
   return (
     <View style={styles.container}>
+      <HomeButton />
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         <Text style={styles.title}>Workouts</Text>
         <Text style={styles.athleteName}>{athleteName}</Text>

@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
 
 const PITCH_TYPES = ['Fastball', 'Curveball', 'Changeup', 'Slider'];
@@ -74,6 +75,17 @@ export default function BullpenEntryScreen() {
     ]);
   };
 
+  const goHome = () => {
+    if (total === 0) {
+      router.push('/home');
+      return;
+    }
+    Alert.alert('Discard session?', 'This session will not be saved.', [
+      { text: 'Keep Going', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: () => router.push('/home') },
+    ]);
+  };
+
   const handleSubmit = async () => {
     if (total === 0) return;
     setSaving(true);
@@ -127,7 +139,9 @@ export default function BullpenEntryScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <View style={styles.container}>
+      <HomeButton onPress={goHome} />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content}>
       <Text style={styles.athleteName}>{athleteName}</Text>
       <Text style={styles.sessionDate}>{sessionDate} · Bullpen · TCN</Text>
 
@@ -232,7 +246,8 @@ export default function BullpenEntryScreen() {
           <Text style={styles.submitButtonText}>{saving ? 'Saving...' : 'Submit Session'}</Text>
         </Pressable>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 

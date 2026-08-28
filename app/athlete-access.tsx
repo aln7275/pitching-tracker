@@ -10,6 +10,7 @@ import {
     TextInput,
     View,
 } from 'react-native';
+import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
 
 type AccessGrant = {
@@ -179,6 +180,7 @@ const [profileNames, setProfileNames] = useState<Record<string, string>>({});
 
   return (
     <View style={styles.container}>
+      <HomeButton />
       <Text style={styles.title}>Access — {athleteName}</Text>
 
       <FlatList

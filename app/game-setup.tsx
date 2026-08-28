@@ -2,6 +2,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { HomeButton } from '../components/HomeButton';
 
 export default function GameSetupScreen() {
   const { athleteId, athleteName } = useLocalSearchParams();
@@ -33,6 +34,7 @@ export default function GameSetupScreen() {
 
   return (
     <View style={styles.container}>
+      <HomeButton />
       <Text style={styles.title}>Game Tracking</Text>
       <Text style={styles.athleteName}>{athleteName}</Text>
 

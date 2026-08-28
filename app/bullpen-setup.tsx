@@ -2,6 +2,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { HomeButton } from '../components/HomeButton';
 
 export default function BullpenSetupScreen() {
   const { athleteId, athleteName } = useLocalSearchParams();
@@ -29,6 +30,7 @@ export default function BullpenSetupScreen() {
 
   return (
     <View style={styles.container}>
+      <HomeButton />
       <Text style={styles.title}>Bullpen Session</Text>
       <Text style={styles.athleteName}>{athleteName}</Text>
 

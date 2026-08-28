@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { DurationInput } from '../components/DurationInput';
+import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
 import {
   DistanceUnit,
@@ -226,7 +227,9 @@ export default function WorkoutAssignScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <View style={styles.container}>
+      <HomeButton />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content}>
       <Text style={styles.title}>{mode === 'assign' ? 'Assign Workout' : 'Log Workout'}</Text>
       <Text style={styles.athleteName}>{athleteName}</Text>
 
@@ -465,7 +468,8 @@ export default function WorkoutAssignScreen() {
           addExercise(exercise);
         }}
       />
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
