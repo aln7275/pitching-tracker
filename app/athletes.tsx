@@ -10,7 +10,11 @@ type Athlete = {
   id: number;
   name: string;
   birthdate: string | null;
+  user_id: string;
+  archived: boolean;
 };
+
+type ActiveGrant = { id: number; granted_to_user_id: string | null; invited_email: string; relationship_label: string | null };
 
 function calculateAge(birthdate: string | null): number | null {
   if (!birthdate) return null;
@@ -34,10 +38,14 @@ export default function AthleteListScreen() {
   const [birthdate, setBirthdate] = useState<Date | null>(null);
   const [showBirthdatePicker, setShowBirthdatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [profileName, setProfileName] = useState('');
-  const [editingName, setEditingName] = useState(false);
   const [newWorkoutCounts, setNewWorkoutCounts] = useState<Record<number, number>>({});
   const [newMessageCounts, setNewMessageCounts] = useState<Record<number, number>>({});
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  const [removeAthlete, setRemoveAthlete] = useState<Athlete | null>(null);
+  const [removeStep, setRemoveStep] = useState<'choose' | 'pickTransfer'>('choose');
+  const [removeGrants, setRemoveGrants] = useState<(ActiveGrant & { displayName: string })[]>([]);
+  const [removeLoading, setRemoveLoading] = useState(false);
 
   useEffect(() => {
     fetchAthletes();
@@ -134,30 +142,116 @@ export default function AthleteListScreen() {
   };
 
   useEffect(() => {
-    const fetchProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase
-        .from('profiles')
-        .select('name')
-        .eq('id', user.id)
-        .single();
-      if (data?.name) setProfileName(data.name);
-    };
-    fetchProfile();
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      setCurrentUserId(user?.id ?? null);
+    })();
   }, []);
 
-   const saveProfileName = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-        const { error } = await supabase
-      .from('profiles')
-      .upsert({ id: user.id, name: profileName.trim() });
-    if (error) {
-      Alert.alert('Error saving name', error.message);
-    } else {
-      setEditingName(false);
+  const openRemoveFlow = async (athlete: Athlete) => {
+    if (athlete.user_id !== currentUserId) {
+      Alert.alert(
+        'Remove yourself from this athlete?',
+        `You'll lose access to ${athlete.name}. The owner would need to re-invite you to get it back.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: async () => {
+              const { data: grant } = await supabase
+                .from('athlete_access')
+                .select('id')
+                .eq('athlete_id', athlete.id)
+                .eq('granted_to_user_id', currentUserId)
+                .eq('status', 'active')
+                .maybeSingle();
+              if (grant) {
+                await supabase.from('athlete_access').update({ status: 'inactive' }).eq('id', grant.id);
+                fetchAthletes();
+              }
+            },
+          },
+        ]
+      );
+      return;
     }
+
+    setRemoveLoading(true);
+    const { data: grants } = await supabase
+      .from('athlete_access')
+      .select('id, granted_to_user_id, invited_email, relationship_label')
+      .eq('athlete_id', athlete.id)
+      .eq('status', 'active');
+
+    const rows = (grants ?? []) as ActiveGrant[];
+    const userIds = rows.map((g) => g.granted_to_user_id).filter((x): x is string => x !== null);
+    let nameMap: Record<string, string> = {};
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', userIds);
+      profiles?.forEach((p) => {
+        if (p.name) nameMap[p.id] = p.name;
+      });
+    }
+    setRemoveGrants(
+      rows.map((g) => ({
+        ...g,
+        displayName: (g.granted_to_user_id && nameMap[g.granted_to_user_id]) || g.relationship_label || g.invited_email,
+      }))
+    );
+    setRemoveStep('choose');
+    setRemoveAthlete(athlete);
+    setRemoveLoading(false);
+  };
+
+  const archiveAthlete = () => {
+    if (!removeAthlete) return;
+    Alert.alert(
+      'Archive this athlete?',
+      `${removeAthlete.name} will be hidden from the calendar and you won't be able to start new workouts, bullpens, or games for them. They'll still show in this list, and you can un-archive anytime.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Archive',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.from('athletes').update({ archived: true }).eq('id', removeAthlete.id);
+            setRemoveAthlete(null);
+            fetchAthletes();
+          },
+        },
+      ]
+    );
+  };
+
+  const transferAndRemove = (grant: ActiveGrant & { displayName: string }) => {
+    if (!removeAthlete) return;
+    Alert.alert(
+      'Transfer and remove yourself?',
+      `${grant.displayName} will become the new owner of ${removeAthlete.name}. You will lose all access - this can't be undone by you.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Transfer and Remove',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await supabase.rpc('transfer_ownership', {
+              p_athlete_id: removeAthlete.id,
+              p_new_owner_user_id: grant.granted_to_user_id,
+              p_remove_departing_owner: true,
+            });
+            if (error) {
+              Alert.alert('Error transferring ownership', error.message);
+              return;
+            }
+            setRemoveAthlete(null);
+            fetchAthletes();
+          },
+        },
+      ]
+    );
   };
 
   const addAthlete = async () => {
@@ -219,27 +313,6 @@ export default function AthleteListScreen() {
         </View>
       </View>
 
-         {editingName ? (
-        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-          <TextInput
-            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-            value={profileName}
-            onChangeText={setProfileName}
-            placeholder="Your name"
-            autoFocus
-          />
-          <Pressable style={styles.addButton} onPress={saveProfileName}>
-            <Text style={styles.addButtonText}>Save</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <Pressable onPress={() => setEditingName(true)} style={{ marginBottom: 16 }}>
-          <Text style={{ color: '#4C9BE8', fontSize: 14 }}>
-            {profileName ? `👤 ${profileName} (tap to edit)` : '👤 Set your name'}
-          </Text>
-        </Pressable>
-      )}
-
       <FlatList
         data={athletes}
         keyExtractor={(item) => item.id.toString()}
@@ -268,10 +341,62 @@ export default function AthleteListScreen() {
             {calculateAge(item.birthdate) !== null && (
               <Text style={styles.athleteAge}>Age {calculateAge(item.birthdate)}</Text>
             )}
+            {item.archived && (
+              <View style={styles.archivedBadge}>
+                <Text style={styles.archivedBadgeText}>Archived — consider transfer</Text>
+              </View>
+            )}
+            <Pressable onPress={() => openRemoveFlow(item)} hitSlop={8} style={styles.removeLink}>
+              <Text style={styles.removeLinkText}>Remove</Text>
+            </Pressable>
           </Pressable>
         )}
         ListEmptyComponent={<Text style={styles.emptyText}>No athletes yet.</Text>}
       />
+
+      <Modal visible={!!removeAthlete} animationType="slide" transparent onRequestClose={() => setRemoveAthlete(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{removeAthlete?.name}</Text>
+            {removeLoading ? (
+              <ActivityIndicator style={{ marginVertical: 20 }} />
+            ) : removeStep === 'choose' ? (
+              <>
+                <Pressable
+                  style={styles.removeOptionButton}
+                  onPress={() => (removeGrants.length > 0 ? setRemoveStep('pickTransfer') : Alert.alert('No one to transfer to', 'No one else has active access to this athlete yet.'))}
+                >
+                  <Text style={styles.removeOptionTitle}>Transfer and Remove</Text>
+                  <Text style={styles.removeOptionSubtitle}>
+                    Make someone else the owner and lose all your own access.
+                  </Text>
+                </Pressable>
+                <Pressable style={styles.removeOptionButton} onPress={archiveAthlete}>
+                  <Text style={styles.removeOptionTitle}>Archive Without Transfer</Text>
+                  <Text style={styles.removeOptionSubtitle}>
+                    Hide from the calendar and stop new sessions, without giving up ownership.
+                  </Text>
+                </Pressable>
+                <Pressable style={styles.cancelButton} onPress={() => setRemoveAthlete(null)}>
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Text style={styles.smallLabel}>Choose the new owner</Text>
+                {removeGrants.map((g) => (
+                  <Pressable key={g.id} style={styles.transferPickRow} onPress={() => transferAndRemove(g)}>
+                    <Text style={styles.transferPickName}>{g.displayName}</Text>
+                  </Pressable>
+                ))}
+                <Pressable style={styles.cancelButton} onPress={() => setRemoveStep('choose')}>
+                  <Text style={styles.cancelButtonText}>Back</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -378,6 +503,16 @@ logoutButtonText: {
   newBadge: { backgroundColor: '#D6524F', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   newMessageBadge: { backgroundColor: '#4C9BE8', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   newBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  archivedBadge: { alignSelf: 'flex-start', backgroundColor: '#E8A93B18', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginTop: 6 },
+  archivedBadgeText: { color: '#E8A93B', fontSize: 11, fontWeight: '700' },
+  removeLink: { alignSelf: 'flex-end', marginTop: 8 },
+  removeLinkText: { color: '#D6524F', fontSize: 12, fontWeight: '600' },
+  removeOptionButton: { borderWidth: 1, borderColor: '#eee', borderRadius: 12, padding: 14, marginBottom: 10, backgroundColor: '#f7f8fa' },
+  removeOptionTitle: { fontSize: 15, fontWeight: '600', color: '#222' },
+  removeOptionSubtitle: { fontSize: 12, color: '#888', marginTop: 4 },
+  transferPickRow: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#eee' },
+  transferPickName: { fontSize: 16, color: '#333' },
+  smallLabel: { fontSize: 11, color: '#888', marginBottom: 10, textTransform: 'uppercase' },
   emptyText: {
     fontSize: 16,
     color: '#888',

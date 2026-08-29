@@ -23,10 +23,17 @@ type AccessGrant = {
   name: string | null;
 };
 
+type TransferRequest = {
+  id: number;
+  requested_by: string;
+  status: string;
+};
+
 export default function AthleteAccessScreen() {
   const { athleteId, athleteName } = useLocalSearchParams();
 
   const [isOwner, setIsOwner] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [grants, setGrants] = useState<AccessGrant[]>([]);
   const [loading, setLoading] = useState(true);
 const [profileNames, setProfileNames] = useState<Record<string, string>>({});
@@ -34,6 +41,8 @@ const [profileNames, setProfileNames] = useState<Record<string, string>>({});
   const [label, setLabel] = useState('');
   const [accessLevel, setAccessLevel] = useState<'view' | 'full'>('view');
   const [saving, setSaving] = useState(false);
+  const [transferRequests, setTransferRequests] = useState<TransferRequest[]>([]);
+  const [requestingTransfer, setRequestingTransfer] = useState(false);
 
   const RELATIONSHIP_OPTIONS = ['Coach', 'Athlete', 'Parent'];
 
@@ -41,6 +50,7 @@ const [profileNames, setProfileNames] = useState<Record<string, string>>({});
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
+    setCurrentUserId(user?.id ?? null);
 
     const { data: athlete } = await supabase
       .from('athletes')
@@ -51,6 +61,13 @@ const [profileNames, setProfileNames] = useState<Record<string, string>>({});
     if (user && athlete) {
       setIsOwner(athlete.user_id === user.id);
     }
+
+    const { data: requests } = await supabase
+      .from('transfer_requests')
+      .select('id, requested_by, status')
+      .eq('athlete_id', athleteId)
+      .eq('status', 'pending');
+    setTransferRequests((requests ?? []) as TransferRequest[]);
 
     const { data, error } = await supabase
       .from('athlete_access')
@@ -170,6 +187,66 @@ const [profileNames, setProfileNames] = useState<Record<string, string>>({});
     );
   };
 
+  const requestTransfer = async () => {
+    if (!currentUserId) return;
+    setRequestingTransfer(true);
+    const { error } = await supabase.from('transfer_requests').insert({
+      athlete_id: athleteId,
+      requested_by: currentUserId,
+    });
+    setRequestingTransfer(false);
+    if (error) {
+      Alert.alert(
+        error.message.includes('duplicate') || error.message.includes('unique') ? 'Already requested' : 'Error requesting transfer',
+        error.message.includes('duplicate') || error.message.includes('unique')
+          ? "You already have a pending request for this athlete."
+          : error.message
+      );
+      return;
+    }
+    const requesterName = profileNames[currentUserId] || 'Someone with access';
+    await supabase.from('messages').insert({
+      athlete_id: athleteId,
+      sender_id: currentUserId,
+      body: `${requesterName} has requested to become the owner of ${athleteName}. Open Manage Access to approve or decline.`,
+    });
+    Alert.alert('Request sent', 'The current owner has been notified.');
+    loadData();
+  };
+
+  const approveTransfer = (request: TransferRequest) => {
+    Alert.alert('Approve ownership transfer?', `You'll keep full access, but they'll control sharing going forward.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Approve',
+        onPress: async () => {
+          const { error } = await supabase.rpc('transfer_ownership', {
+            p_athlete_id: athleteId,
+            p_new_owner_user_id: request.requested_by,
+          });
+          if (error) {
+            Alert.alert('Error transferring ownership', error.message);
+            return;
+          }
+          await supabase
+            .from('transfer_requests')
+            .update({ status: 'approved', resolved_at: new Date().toISOString() })
+            .eq('id', request.id);
+          Alert.alert('Ownership transferred');
+          loadData();
+        },
+      },
+    ]);
+  };
+
+  const declineTransfer = async (request: TransferRequest) => {
+    await supabase
+      .from('transfer_requests')
+      .update({ status: 'declined', resolved_at: new Date().toISOString() })
+      .eq('id', request.id);
+    loadData();
+  };
+
   if (loading) {
     return (
       <View style={styles.container}>
@@ -261,6 +338,39 @@ const [profileNames, setProfileNames] = useState<Record<string, string>>({});
                       <Text style={styles.transferAction}>Make Owner →</Text>
                     </Pressable>
                   ))}
+              </View>
+            )}
+
+            {isOwner && transferRequests.length > 0 && (
+              <View style={styles.inviteCard}>
+                <Text style={styles.sectionLabel}>Ownership Transfer Requests</Text>
+                {transferRequests.map((r) => (
+                  <View key={r.id} style={styles.transferRow}>
+                    <Text style={styles.transferName}>{profileNames[r.requested_by] || 'Someone with access'}</Text>
+                    <View style={{ flexDirection: 'row', gap: 14 }}>
+                      <Pressable onPress={() => approveTransfer(r)}>
+                        <Text style={styles.transferAction}>Approve</Text>
+                      </Pressable>
+                      <Pressable onPress={() => declineTransfer(r)}>
+                        <Text style={styles.revokeText}>Decline</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {!isOwner && grants.some((g) => g.granted_to_user_id === currentUserId && g.status === 'active') && (
+              <View style={styles.inviteCard}>
+                {transferRequests.some((r) => r.requested_by === currentUserId) ? (
+                  <Text style={styles.smallLabel}>Ownership transfer requested — waiting on the owner.</Text>
+                ) : (
+                  <Pressable style={styles.inviteButton} onPress={requestTransfer} disabled={requestingTransfer}>
+                    <Text style={styles.inviteButtonText}>
+                      {requestingTransfer ? 'Requesting...' : 'Request Ownership Transfer'}
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             )}
 

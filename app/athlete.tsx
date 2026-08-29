@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, Dimensions, FlatList, Modal, Platform, Pressa
 import { LineChart } from 'react-native-chart-kit';
 import { ChatIcon, PencilIcon } from '../components/Icons';
 import { HomeButton } from '../components/HomeButton';
+import { PitchCountSection } from '../components/PitchCountSection';
 import { supabase } from '../supabase';
 import { GameSession, formatStat, gameSessionStats } from '../types/game';
 import { MISSED_REASON_CHIPS, Workout, primaryMetric } from '../types/workout';
@@ -15,8 +16,24 @@ type Session = {
   session_type: string;
   bullpen_subtype: string | null;
   notes: string | null;
+  status: string;
+  missed_reason: string | null;
   pitches: { outcome: string }[];
 };
+
+type PastSessionKind = 'workout' | 'bullpen' | 'game';
+
+type PastItem =
+  | { kind: 'bullpen'; date: string; session: Session }
+  | { kind: 'game'; date: string; session: GameSession }
+  | { kind: 'workout'; date: string; workout: Workout };
+
+const PAST_SESSION_FILTERS: { key: 'all' | PastSessionKind; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'workout', label: 'Workout' },
+  { key: 'bullpen', label: 'Bullpen' },
+  { key: 'game', label: 'Game' },
+];
 
 type AthleteData = {
   user_id: string;
@@ -26,6 +43,8 @@ type AthleteData = {
   sport: string;
   team_name: string | null;
   owner_relationship_label: string | null;
+  archived: boolean;
+  daily_pitch_limit_override: number | null;
 };
 
 type PersonRow = {
@@ -171,6 +190,7 @@ export default function AthleteHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('all-time');
   const [activeType, setActiveType] = useState<'bullpen' | 'workouts' | 'games'>('bullpen');
+  const [pastSessionsFilter, setPastSessionsFilter] = useState<'all' | PastSessionKind>('all');
   const [canLogSessions, setCanLogSessions] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -185,6 +205,7 @@ export default function AthleteHomeScreen() {
   const [editSport, setEditSport] = useState<'baseball' | 'softball'>('baseball');
   const [editTeamName, setEditTeamName] = useState('');
   const [editOwnerRole, setEditOwnerRole] = useState<string | null>(null);
+  const [editDailyPitchLimit, setEditDailyPitchLimit] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
   // People (access) list
@@ -217,7 +238,9 @@ export default function AthleteHomeScreen() {
   const fetchAthleteData = useCallback(async () => {
     const { data, error } = await supabase
       .from('athletes')
-      .select('user_id, name, birthdate, throwing_hand, sport, team_name, owner_relationship_label')
+      .select(
+        'user_id, name, birthdate, throwing_hand, sport, team_name, owner_relationship_label, archived, daily_pitch_limit_override'
+      )
       .eq('id', id)
       .single();
 
@@ -395,6 +418,7 @@ export default function AthleteHomeScreen() {
     setEditSport((athleteData.sport as 'baseball' | 'softball') ?? 'baseball');
     setEditTeamName(athleteData.team_name ?? '');
     setEditOwnerRole(athleteData.owner_relationship_label);
+    setEditDailyPitchLimit(athleteData.daily_pitch_limit_override?.toString() ?? '');
     setEditModalVisible(true);
   };
 
@@ -414,6 +438,7 @@ export default function AthleteHomeScreen() {
         sport: editSport,
         team_name: editTeamName.trim() || null,
         owner_relationship_label: editOwnerRole,
+        daily_pitch_limit_override: editDailyPitchLimit.trim() ? parseInt(editDailyPitchLimit, 10) : null,
       })
       .eq('id', id);
 
@@ -487,6 +512,11 @@ export default function AthleteHomeScreen() {
         },
       ]
     );
+  };
+
+  const unarchiveAthlete = async () => {
+    await supabase.from('athletes').update({ archived: false }).eq('id', id);
+    fetchAthleteData();
   };
 
   const cancelAllUpcomingWorkouts = async () => {
@@ -670,6 +700,28 @@ export default function AthleteHomeScreen() {
     return gameSessions.filter((s) => new Date(s.session_date + 'T00:00:00') >= cutoff);
   }, [gameSessions, dateRange]);
 
+  // Combines all three session types into one feed - only resolved entries
+  // (never a still-scheduled or in-progress one, which hasn't actually
+  // happened yet).
+  const allPastItems = useMemo(() => {
+    const items: PastItem[] = [];
+    sessions
+      .filter((s) => s.status !== 'scheduled' && s.status !== 'in_progress')
+      .forEach((s) => items.push({ kind: 'bullpen', date: s.session_date, session: s }));
+    gameSessions
+      .filter((s) => s.status !== 'scheduled' && s.status !== 'in_progress')
+      .forEach((s) => items.push({ kind: 'game', date: s.session_date, session: s }));
+    workoutsForAnalytics
+      .filter((w) => w.status !== 'scheduled')
+      .forEach((w) => items.push({ kind: 'workout', date: w.scheduled_date, workout: w }));
+    return items.sort((a, b) => b.date.localeCompare(a.date));
+  }, [sessions, gameSessions, workoutsForAnalytics]);
+
+  const filteredPastItems = useMemo(
+    () => (pastSessionsFilter === 'all' ? allPastItems : allPastItems.filter((i) => i.kind === pastSessionsFilter)),
+    [allPastItems, pastSessionsFilter]
+  );
+
   const gamesAgg = useMemo(
     () =>
       gameSessionStats({
@@ -707,8 +759,8 @@ export default function AthleteHomeScreen() {
     <View style={styles.container}>
       <HomeButton />
       <FlatList
-        data={activeType === 'bullpen' ? sessions : []}
-        keyExtractor={(item) => item.id.toString()}
+        data={filteredPastItems}
+        keyExtractor={(item) => `${item.kind}-${item.kind === 'workout' ? item.workout.id : item.session.id}`}
         ListHeaderComponent={
           <>
             <View style={styles.titleRow}>
@@ -731,6 +783,19 @@ export default function AthleteHomeScreen() {
                 </Text>
                 {athleteData.team_name && (
                   <Text style={styles.metaText}>{athleteData.team_name}</Text>
+                )}
+              </View>
+            )}
+
+            {athleteData?.archived && (
+              <View style={styles.archivedNotice}>
+                <Text style={styles.archivedNoticeText}>
+                  Archived — hidden from the Home calendar, new sessions can't be started.
+                </Text>
+                {isOwner && (
+                  <Pressable onPress={unarchiveAthlete}>
+                    <Text style={styles.archivedNoticeAction}>Un-archive</Text>
+                  </Pressable>
                 )}
               </View>
             )}
@@ -778,32 +843,31 @@ export default function AthleteHomeScreen() {
               )}
             </Pressable>
 
-            {canLogSessions && (
-              <Pressable
-                style={styles.button}
-                onPress={() =>
-                  router.push({ pathname: '/bullpen-setup', params: { athleteId: id, athleteName: name } })
-                }
-              >
-                <Text style={styles.buttonText}>Quick Start Bullpen</Text>
-              </Pressable>
-            )}
-
-            {canLogSessions && (
-              <Pressable style={styles.button} onPress={startGame}>
-                <Text style={styles.buttonText}>Quick Start Game</Text>
-              </Pressable>
-            )}
-
-            {canLogSessions && (
-              <Pressable
-                style={styles.button}
-                onPress={() =>
-                  router.push({ pathname: '/workout-assign', params: { athleteId: id, athleteName: name } })
-                }
-              >
-                <Text style={styles.buttonText}>Quick Start Workout</Text>
-              </Pressable>
+            {canLogSessions && !athleteData?.archived && (
+              <>
+                <Text style={styles.quickStartLabel}>Quick Start Session</Text>
+                <View style={styles.quickStartRow}>
+                  <Pressable
+                    style={styles.quickStartButton}
+                    onPress={() =>
+                      router.push({ pathname: '/bullpen-setup', params: { athleteId: id, athleteName: name } })
+                    }
+                  >
+                    <Text style={styles.quickStartButtonText}>Bullpen</Text>
+                  </Pressable>
+                  <Pressable style={styles.quickStartButton} onPress={startGame}>
+                    <Text style={styles.quickStartButtonText}>Game</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.quickStartButton}
+                    onPress={() =>
+                      router.push({ pathname: '/workout-assign', params: { athleteId: id, athleteName: name } })
+                    }
+                  >
+                    <Text style={styles.quickStartButtonText}>Workout</Text>
+                  </Pressable>
+                </View>
+              </>
             )}
 
             {canLogSessions && (
@@ -813,6 +877,14 @@ export default function AthleteHomeScreen() {
             )}
 
             <Text style={styles.sectionTitle}>Analytics</Text>
+
+            {athleteData && (
+              <PitchCountSection
+                athleteId={Number(id)}
+                birthdate={athleteData.birthdate}
+                dailyPitchLimitOverride={athleteData.daily_pitch_limit_override}
+              />
+            )}
 
             <View style={styles.filterRow}>
               {ANALYTICS_TYPES.map((t) => (
@@ -849,59 +921,67 @@ export default function AthleteHomeScreen() {
                 <Text style={styles.emptyText}>No sessions in this range.</Text>
               ) : (
                 <>
-                  <Text style={styles.chartTitle}>Target % Trend</Text>
-                  <LineChart
-                    data={{
-                      labels: dataPoints.map((d) => d.label),
-                      datasets: [{ data: dataPoints.map((d) => d.targetPct) }],
-                    }}
-                    width={screenWidth}
-                    height={180}
-                    yAxisSuffix="%"
-                    chartConfig={chartConfig}
-                    bezier
-                    style={styles.chart}
-                  />
-                  <Text style={styles.chartTitle}>T / C / N Breakdown</Text>
-                  <TCNBarChart totals={tcnTotals} />
-                  <Text style={styles.chartTitle}>Simulated Batters Faced</Text>
-                  <View style={styles.statCard}>
-                    {battersFacedTotals.battersFaced === 0 && tcnTotals.T + tcnTotals.C + tcnTotals.N > 0 ? (
-                      <>
-                        <Text style={styles.statCardTotal}>—</Text>
-                        <Text style={styles.statCardTotalLabel}>No Simulated At-Bats Yet</Text>
-                      </>
-                    ) : (
-                      <>
-                        <Text style={styles.statCardTotal}>{battersFacedTotals.battersFaced}</Text>
-                        <Text style={styles.statCardTotalLabel}>Simulated Batters Faced</Text>
+                  <View style={styles.sectionCard}>
+                    <Text style={styles.chartTitle}>Target % Trend</Text>
+                    <LineChart
+                      data={{
+                        labels: dataPoints.map((d) => d.label),
+                        datasets: [{ data: dataPoints.map((d) => d.targetPct) }],
+                      }}
+                      width={screenWidth}
+                      height={180}
+                      yAxisSuffix="%"
+                      chartConfig={chartConfig}
+                      bezier
+                      style={styles.chart}
+                    />
+                  </View>
 
-                        <View style={styles.statCardRow}>
-                          <View style={styles.statCardItem}>
-                            <Text style={[styles.statCardNumber, { color: '#3FB98A' }]}>
-                              {battersFacedTotals.k}
-                            </Text>
-                            <Text style={styles.statCardLabel}>Ks</Text>
-                            <Text style={styles.statCardSubtext}>{battersFacedTotals.kPct}%</Text>
+                  <View style={styles.sectionCard}>
+                    <Text style={styles.chartTitle}>T / C / N Breakdown</Text>
+                    <TCNBarChart totals={tcnTotals} />
+                  </View>
+
+                  <View style={styles.sectionCard}>
+                    <Text style={styles.chartTitle}>Simulated Batters Faced</Text>
+                    <View style={styles.statCard}>
+                      {battersFacedTotals.battersFaced === 0 && tcnTotals.T + tcnTotals.C + tcnTotals.N > 0 ? (
+                        <>
+                          <Text style={styles.statCardTotal}>—</Text>
+                          <Text style={styles.statCardTotalLabel}>No Simulated At-Bats Yet</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={styles.statCardTotal}>{battersFacedTotals.battersFaced}</Text>
+                          <Text style={styles.statCardTotalLabel}>Simulated Batters Faced</Text>
+
+                          <View style={styles.statCardRow}>
+                            <View style={styles.statCardItem}>
+                              <Text style={[styles.statCardNumber, { color: '#3FB98A' }]}>
+                                {battersFacedTotals.k}
+                              </Text>
+                              <Text style={styles.statCardLabel}>Ks</Text>
+                              <Text style={styles.statCardSubtext}>{battersFacedTotals.kPct}%</Text>
+                            </View>
+
+                            <View style={styles.statCardItem}>
+                              <Text style={[styles.statCardNumber, { color: '#D6524F' }]}>
+                                {battersFacedTotals.bb}
+                              </Text>
+                              <Text style={styles.statCardLabel}>BB</Text>
+                              <Text style={styles.statCardSubtext}>{battersFacedTotals.bbPct}%</Text>
+                            </View>
                           </View>
+                        </>
+                      )}
 
-                          <View style={styles.statCardItem}>
-                            <Text style={[styles.statCardNumber, { color: '#D6524F' }]}>
-                              {battersFacedTotals.bb}
-                            </Text>
-                            <Text style={styles.statCardLabel}>BB</Text>
-                            <Text style={styles.statCardSubtext}>{battersFacedTotals.bbPct}%</Text>
-                          </View>
-                        </View>
-                      </>
-                    )}
-
-                    <View style={styles.statCardCNote}>
-                      <Text style={styles.statCardCNoteText}>
-                        <Text style={styles.statCardCNoteNumber}>{tcnTotals.C}</Text> Competitive
-                        pitch{tcnTotals.C === 1 ? '' : 'es'} thrown — close misses, neutral in this
-                        model (don't count toward K/BB)
-                      </Text>
+                      <View style={styles.statCardCNote}>
+                        <Text style={styles.statCardCNoteText}>
+                          <Text style={styles.statCardCNoteNumber}>{tcnTotals.C}</Text> Competitive
+                          pitch{tcnTotals.C === 1 ? '' : 'es'} thrown — close misses, neutral in this
+                          model (don't count toward K/BB)
+                        </Text>
+                      </View>
                     </View>
                   </View>
                 </>
@@ -909,85 +989,89 @@ export default function AthleteHomeScreen() {
 
             {activeType === 'workouts' && (
               <>
-                <Text style={styles.chartTitle}>Compliance</Text>
-                <View style={styles.statCard}>
-                  <Text style={styles.statCardTotal}>{complianceTotals.total}</Text>
-                  <Text style={styles.statCardTotalLabel}>Workouts in Range</Text>
-                  <View style={styles.statCardRow}>
-                    <View style={styles.statCardItem}>
-                      <Text style={[styles.statCardNumber, { color: '#3FB98A' }]}>
-                        {complianceTotals.completed}
-                      </Text>
-                      <Text style={styles.statCardLabel}>Completed</Text>
+                <View style={styles.sectionCard}>
+                  <Text style={styles.chartTitle}>Compliance</Text>
+                  <View style={styles.statCard}>
+                    <Text style={styles.statCardTotal}>{complianceTotals.total}</Text>
+                    <Text style={styles.statCardTotalLabel}>Workouts in Range</Text>
+                    <View style={styles.statCardRow}>
+                      <View style={styles.statCardItem}>
+                        <Text style={[styles.statCardNumber, { color: '#3FB98A' }]}>
+                          {complianceTotals.completed}
+                        </Text>
+                        <Text style={styles.statCardLabel}>Completed</Text>
+                      </View>
+                      <View style={styles.statCardItem}>
+                        <Text style={[styles.statCardNumber, { color: '#D6524F' }]}>
+                          {complianceTotals.missed}
+                        </Text>
+                        <Text style={styles.statCardLabel}>Missed</Text>
+                      </View>
+                      <View style={styles.statCardItem}>
+                        <Text style={[styles.statCardNumber, { color: '#4C9BE8' }]}>
+                          {complianceTotals.scheduled}
+                        </Text>
+                        <Text style={styles.statCardLabel}>Scheduled</Text>
+                      </View>
                     </View>
-                    <View style={styles.statCardItem}>
-                      <Text style={[styles.statCardNumber, { color: '#D6524F' }]}>
-                        {complianceTotals.missed}
-                      </Text>
-                      <Text style={styles.statCardLabel}>Missed</Text>
-                    </View>
-                    <View style={styles.statCardItem}>
-                      <Text style={[styles.statCardNumber, { color: '#4C9BE8' }]}>
-                        {complianceTotals.scheduled}
-                      </Text>
-                      <Text style={styles.statCardLabel}>Scheduled</Text>
-                    </View>
+                    {complianceTotals.missed > 0 && (
+                      <View style={styles.statCardCNote}>
+                        <Text style={styles.statCardCNoteText}>
+                          Missed reasons:{' '}
+                          {Object.entries(complianceTotals.reasonCounts)
+                            .map(([reason, count]) => `${reason} (${count})`)
+                            .join('  ·  ')}
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                  {complianceTotals.missed > 0 && (
-                    <View style={styles.statCardCNote}>
-                      <Text style={styles.statCardCNoteText}>
-                        Missed reasons:{' '}
-                        {Object.entries(complianceTotals.reasonCounts)
-                          .map(([reason, count]) => `${reason} (${count})`)
-                          .join('  ·  ')}
-                      </Text>
-                    </View>
-                  )}
                 </View>
 
-                <Text style={styles.chartTitle}>Exercise Progress</Text>
-                {loggedExercises.length === 0 ? (
-                  <Text style={styles.emptyText}>Log actual values on some exercises to see progress here.</Text>
-                ) : (
-                  <>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
-                      {loggedExercises.map((e) => (
-                        <Pressable
-                          key={e.id}
-                          style={[styles.categoryPill, selectedExerciseId === e.id && styles.filterPillActive]}
-                          onPress={() => setSelectedExerciseId(e.id)}
-                        >
-                          <Text
-                            style={[
-                              styles.filterPillText,
-                              selectedExerciseId === e.id && styles.filterPillTextActive,
-                            ]}
+                <View style={styles.sectionCard}>
+                  <Text style={styles.chartTitle}>Exercise Progress</Text>
+                  {loggedExercises.length === 0 ? (
+                    <Text style={styles.emptyText}>Log actual values on some exercises to see progress here.</Text>
+                  ) : (
+                    <>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+                        {loggedExercises.map((e) => (
+                          <Pressable
+                            key={e.id}
+                            style={[styles.categoryPill, selectedExerciseId === e.id && styles.filterPillActive]}
+                            onPress={() => setSelectedExerciseId(e.id)}
                           >
-                            {e.name}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </ScrollView>
+                            <Text
+                              style={[
+                                styles.filterPillText,
+                                selectedExerciseId === e.id && styles.filterPillTextActive,
+                              ]}
+                            >
+                              {e.name}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </ScrollView>
 
-                    {selectedExerciseId && progressData.points.length > 0 && (
-                      <LineChart
-                        data={{
-                          labels: progressData.points.map((p) => {
-                            const d = new Date(p.date + 'T00:00:00');
-                            return `${d.getMonth() + 1}/${d.getDate()}`;
-                          }),
-                          datasets: [{ data: progressData.points.map((p) => p.value) }],
-                        }}
-                        width={screenWidth}
-                        height={180}
-                        yAxisSuffix={` ${progressData.label}`}
-                        chartConfig={chartConfig}
-                        bezier
-                        style={styles.chart}
-                      />
-                    )}
-                  </>
-                )}
+                      {selectedExerciseId && progressData.points.length > 0 && (
+                        <LineChart
+                          data={{
+                            labels: progressData.points.map((p) => {
+                              const d = new Date(p.date + 'T00:00:00');
+                              return `${d.getMonth() + 1}/${d.getDate()}`;
+                            }),
+                            datasets: [{ data: progressData.points.map((p) => p.value) }],
+                          }}
+                          width={screenWidth}
+                          height={180}
+                          yAxisSuffix={` ${progressData.label}`}
+                          chartConfig={chartConfig}
+                          bezier
+                          style={styles.chart}
+                        />
+                      )}
+                    </>
+                  )}
+                </View>
               </>
             )}
 
@@ -995,7 +1079,7 @@ export default function AthleteHomeScreen() {
               (filteredGameSessions.length === 0 ? (
                 <Text style={styles.emptyText}>No games logged yet in this range.</Text>
               ) : (
-                <>
+                <View style={styles.sectionCard}>
                   <Text style={styles.chartTitle}>Pitching Line</Text>
                   <View style={styles.statCard}>
                     <Text style={styles.statCardTotal}>{gamesAgg.ip}</Text>
@@ -1033,72 +1117,128 @@ export default function AthleteHomeScreen() {
                       </View>
                     </View>
                   </View>
-
-                  <Text style={styles.chartTitle}>Past Games</Text>
-                  {filteredGameSessions.map((s) => {
-                    const stats = gameSessionStats(s);
-                    return (
-                      <View key={s.id} style={styles.sessionRow}>
-                        <View style={styles.sessionHeader}>
-                          <Text style={styles.sessionDate}>{s.session_date}</Text>
-                          <View style={styles.headerRight}>
-                            <Text style={styles.targetPct}>{stats.ip} IP</Text>
-                            <Text style={styles.pitchTotal}>{stats.pitchCount} pitches</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.sessionType}>
-                          {s.game_subtype === 'practice' ? 'Practice/Scrimmage' : 'Live Game'}
-                          {s.opponent ? ` · ${s.opponent}` : ''}
-                        </Text>
-                        <View style={styles.statsRow}>
-                          <Text style={styles.statText}>R: {stats.runs}</Text>
-                          <Text style={styles.statText}>ER: {stats.earnedRuns}</Text>
-                          <Text style={styles.statText}>K: {stats.k}</Text>
-                          <Text style={styles.statText}>BB: {stats.bb}</Text>
-                          <Text style={styles.statText}>H: {stats.hits}</Text>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </>
+                </View>
               ))}
 
-            {activeType === 'bullpen' && <Text style={styles.sectionTitle}>Past Sessions</Text>}
+            <View style={styles.sectionCard}>
+              <Text style={styles.chartTitle}>Past Sessions</Text>
+              <View style={styles.filterRow}>
+                {PAST_SESSION_FILTERS.map((f) => (
+                  <Pressable
+                    key={f.key}
+                    style={[styles.filterPill, pastSessionsFilter === f.key && styles.filterPillActive]}
+                    onPress={() => setPastSessionsFilter(f.key)}
+                  >
+                    <Text style={[styles.filterPillText, pastSessionsFilter === f.key && styles.filterPillTextActive]}>
+                      {f.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
           </>
         }
         renderItem={({ item }) => {
-          const s = summarize(item.pitches);
+          if (item.kind === 'bullpen') {
+            const session = item.session;
+            const s = summarize(session.pitches);
+            return (
+              <View style={styles.sessionRow}>
+                <View style={styles.sessionHeader}>
+                  <View style={styles.headerLeft}>
+                    <Text style={styles.kindBadge}>Bullpen</Text>
+                    <Text style={styles.sessionDate}>{session.session_date}</Text>
+                  </View>
+                  <View style={styles.headerRight}>
+                    <Text style={styles.targetPct}>{s.targetPct}% T</Text>
+                    <Text style={styles.pitchTotal}>{s.total} pitches</Text>
+                  </View>
+                </View>
+                <Pressable style={styles.shareButton} onPress={() => shareSession(session)}>
+                  <Text style={styles.shareButtonText}>Share Results</Text>
+                </Pressable>
+                <Text style={styles.sessionType}>{session.bullpen_subtype ?? 'TCN'}</Text>
+                <View style={styles.statsRow}>
+                  <Text style={styles.statText}>T: {s.counts.T}</Text>
+                  <Text style={styles.statText}>C: {s.counts.C}</Text>
+                  <Text style={styles.statText}>N: {s.counts.N}</Text>
+                  <Text style={styles.statDivider}>|</Text>
+                  <Text style={styles.statText}>    Batters Faced: {s.k + s.bb}</Text>
+                  <Text style={styles.statText}>K: {s.k}</Text>
+                  <Text style={styles.statText}>BB: {s.bb}</Text>
+                </View>
+                {session.status === 'missed' && session.missed_reason && (
+                  <Text style={styles.sessionNotes}>Missed: {session.missed_reason}</Text>
+                )}
+                {session.notes ? <Text style={styles.sessionNotes}>{session.notes}</Text> : null}
+              </View>
+            );
+          }
+
+          if (item.kind === 'game') {
+            const session = item.session;
+            const stats = gameSessionStats(session);
+            return (
+              <View style={styles.sessionRow}>
+                <View style={styles.sessionHeader}>
+                  <View style={styles.headerLeft}>
+                    <Text style={styles.kindBadge}>Game</Text>
+                    <Text style={styles.sessionDate}>{session.session_date}</Text>
+                  </View>
+                  <View style={styles.headerRight}>
+                    <Text style={styles.targetPct}>{stats.ip} IP</Text>
+                    <Text style={styles.pitchTotal}>{stats.pitchCount} pitches</Text>
+                  </View>
+                </View>
+                <Text style={styles.sessionType}>
+                  {session.game_subtype === 'practice' ? 'Practice/Scrimmage' : 'Live Game'}
+                  {session.opponent ? ` · ${session.opponent}` : ''}
+                </Text>
+                <View style={styles.statsRow}>
+                  <Text style={styles.statText}>R: {stats.runs}</Text>
+                  <Text style={styles.statText}>ER: {stats.earnedRuns}</Text>
+                  <Text style={styles.statText}>K: {stats.k}</Text>
+                  <Text style={styles.statText}>BB: {stats.bb}</Text>
+                  <Text style={styles.statText}>H: {stats.hits}</Text>
+                </View>
+                {session.status === 'missed' && session.missed_reason && (
+                  <Text style={styles.sessionNotes}>Missed: {session.missed_reason}</Text>
+                )}
+              </View>
+            );
+          }
+
+          const workout = item.workout;
           return (
             <View style={styles.sessionRow}>
               <View style={styles.sessionHeader}>
-                <Text style={styles.sessionDate}>{item.session_date}</Text>
+                <View style={styles.headerLeft}>
+                  <Text style={styles.kindBadge}>Workout</Text>
+                  <Text style={styles.sessionDate}>{workout.scheduled_date}</Text>
+                </View>
                 <View style={styles.headerRight}>
-                  <Text style={styles.targetPct}>{s.targetPct}% T</Text>
-                  <Text style={styles.pitchTotal}>{s.total} pitches</Text>
+                  <Text
+                    style={[
+                      styles.targetPct,
+                      { color: workout.status === 'missed' ? '#D6524F' : '#3FB98A' },
+                    ]}
+                  >
+                    {workout.status.toUpperCase()}
+                  </Text>
                 </View>
               </View>
-              <Pressable style={styles.shareButton} onPress={() => shareSession(item)}>
-                <Text style={styles.shareButtonText}>Share Results</Text>
-              </Pressable>
-              <Text style={styles.sessionType}>
-                {item.session_type} {item.bullpen_subtype ? `· ${item.bullpen_subtype}` : ''}
+              <Text style={styles.sessionType}>{workout.title || 'Workout'}</Text>
+              <Text style={styles.statText}>
+                {workout.workout_exercises.length} exercise{workout.workout_exercises.length === 1 ? '' : 's'}
               </Text>
-              <View style={styles.statsRow}>
-                <Text style={styles.statText}>T: {s.counts.T}</Text>
-                <Text style={styles.statText}>C: {s.counts.C}</Text>
-                <Text style={styles.statText}>N: {s.counts.N}</Text>
-                <Text style={styles.statDivider}>|</Text>
-                <Text style={styles.statText}>    Batters Faced: {s.k + s.bb}</Text>
-                <Text style={styles.statText}>K: {s.k}</Text>
-                <Text style={styles.statText}>BB: {s.bb}</Text>
-              </View>
-              {item.notes ? <Text style={styles.sessionNotes}>{item.notes}</Text> : null}
+              {workout.status === 'missed' && workout.missed_reason && (
+                <Text style={styles.sessionNotes}>Missed: {workout.missed_reason}</Text>
+              )}
+              {workout.notes ? <Text style={styles.sessionNotes}>{workout.notes}</Text> : null}
             </View>
           );
         }}
-        ListEmptyComponent={
-          activeType === 'bullpen' && !loading ? <Text style={styles.emptyText}>No sessions logged yet.</Text> : null
-        }
+        ListEmptyComponent={!loading ? <Text style={styles.emptyText}>No sessions logged yet.</Text> : null}
         contentContainerStyle={{ paddingBottom: 40 }}
       />
 
@@ -1179,6 +1319,15 @@ export default function AthleteHomeScreen() {
               onChangeText={setEditTeamName}
             />
 
+            <Text style={styles.smallLabel}>Daily Pitch Limit (optional override)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Leave blank to use the age-based suggestion"
+              value={editDailyPitchLimit}
+              onChangeText={setEditDailyPitchLimit}
+              keyboardType="numeric"
+            />
+
             <Text style={styles.smallLabel}>Your Role</Text>
             <View style={styles.toggleRow}>
               {RELATIONSHIP_OPTIONS.map((option) => (
@@ -1223,6 +1372,9 @@ const styles = StyleSheet.create({
   editPencil: { padding: 4 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
   metaText: { fontSize: 13, color: '#888' },
+  archivedNotice: { backgroundColor: '#E8A93B18', borderRadius: 10, padding: 12, marginBottom: 20 },
+  archivedNoticeText: { fontSize: 12, color: '#8a6d1a' },
+  archivedNoticeAction: { fontSize: 12, color: '#4C9BE8', fontWeight: '600', marginTop: 6 },
 
   peopleCard: { backgroundColor: '#f7f8fa', borderRadius: 14, borderWidth: 1, borderColor: '#eee', padding: 6, marginBottom: 8 },
   personRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 8 },
@@ -1258,6 +1410,16 @@ const styles = StyleSheet.create({
 
   button: { backgroundColor: '#4C9BE8', borderRadius: 10, padding: 16, alignItems: 'center', marginBottom: 14 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  quickStartLabel: {
+    fontSize: 11,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  quickStartRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  quickStartButton: { flex: 1, backgroundColor: '#4C9BE8', borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  quickStartButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   secondaryButton: { borderWidth: 1, borderColor: '#4C9BE8', borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 12 },
   secondaryButtonText: { color: '#4C9BE8', fontSize: 14, fontWeight: '600' },
   cancelAllButton: { borderWidth: 1, borderColor: '#D6524F', borderRadius: 10, padding: 12, alignItems: 'center', marginBottom: 30 },
@@ -1275,6 +1437,8 @@ const styles = StyleSheet.create({
   filterPillActive: { backgroundColor: '#4C9BE8', borderColor: '#4C9BE8' },
   filterPillText: { fontSize: 12, color: '#444' },
   filterPillTextActive: { color: '#fff', fontWeight: '600' },
+
+  sectionCard: { borderWidth: 1, borderColor: '#eee', borderRadius: 14, padding: 14, marginBottom: 14 },
 
   typePill: { flex: 1, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#ddd', alignItems: 'center' },
   typePillActive: { backgroundColor: '#4C9BE8', borderColor: '#4C9BE8' },
@@ -1331,6 +1495,18 @@ const styles = StyleSheet.create({
   shareButton: { alignSelf: 'flex-start', marginTop: 8, marginBottom: 4 },
   shareButtonText: { fontSize: 12, color: '#4C9BE8', fontWeight: '600' },
   sessionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  kindBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#4C9BE8',
+    backgroundColor: '#4C9BE818',
+    textTransform: 'uppercase',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
   headerRight: { alignItems: 'flex-end' },
   sessionDate: { fontSize: 16, fontWeight: '600' },
   targetPct: { fontSize: 15, fontWeight: '700', color: '#3FB98A' },

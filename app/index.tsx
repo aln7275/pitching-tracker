@@ -9,7 +9,20 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-    const handleLogin = async () => {
+    const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert('Enter your email', 'Type your email address above first, then tap Forgot Password again.');
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+    if (error) {
+      Alert.alert('Error sending reset link', error.message);
+      return;
+    }
+    Alert.alert('Check your email', `A password reset link was sent to ${email.trim()}. It opens in your browser.`);
+  };
+
+  const handleLogin = async () => {
     if (!email.trim() || !password) {
       Alert.alert('Missing info', 'Please enter your email and password.');
       return;
@@ -58,6 +71,10 @@ export default function LoginScreen() {
 
       <Pressable style={styles.button} onPress={handleLogin} disabled={loading}>
         <Text style={styles.buttonText}>{loading ? 'Logging in...' : 'Log In'}</Text>
+      </Pressable>
+
+      <Pressable onPress={handleForgotPassword} style={styles.link}>
+        <Text style={styles.linkText}>Forgot Password?</Text>
       </Pressable>
 
       <Link href="/signup" style={styles.link}>

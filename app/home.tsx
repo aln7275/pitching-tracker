@@ -67,7 +67,7 @@ export default function HomeScreen() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const { data: athleteData } = await supabase.from('athletes').select('id, name');
+    const { data: athleteData } = await supabase.from('athletes').select('id, name').eq('archived', false);
     const athleteList = (athleteData ?? []) as Athlete[];
     setAthletes(athleteList);
     if (focusAthleteId && !focusApplied.current) {
@@ -291,7 +291,7 @@ export default function HomeScreen() {
           <Text style={styles.title}>Home</Text>
           <Pressable
             style={styles.settingsButton}
-            onPress={() => Alert.alert('Coming Soon', 'Profile management is coming soon.')}
+            onPress={() => router.push('/profile')}
             hitSlop={10}
           >
             <SettingsIcon color="#888" size={22} />
