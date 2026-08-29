@@ -1,4 +1,4 @@
-export type GamePitchOutcome = 'ball' | 'strike' | 'foul' | 'hbp' | 'hit' | 'out';
+export type GamePitchOutcome = 'ball' | 'strike' | 'foul' | 'hbp' | 'hit' | 'out' | 'other_out';
 
 export type GamePitch = {
   id: number;
@@ -88,10 +88,17 @@ export function deriveCounts(outcomes: GamePitchOutcome[]): InningCounts {
       outs++;
       balls = 0;
       strikes = 0;
+    } else if (outcome === 'other_out') {
+      // Not part of the current batter's at-bat (caught stealing, picked
+      // off, thrown out from an earlier at-bat) - counts toward the
+      // inning's outs but never touches the in-progress ball/strike count,
+      // and isn't itself a pitch thrown.
+      outs++;
     }
   });
 
-  return { balls, strikes, outs, k, bb, hbp, hits, manualOuts, pitchCount: outcomes.length };
+  const pitchCount = outcomes.filter((o) => o !== 'other_out').length;
+  return { balls, strikes, outs, k, bb, hbp, hits, manualOuts, pitchCount };
 }
 
 // Baseball's IP notation: outs%3 is thirds, shown as .1/.2, never a decimal
@@ -104,7 +111,7 @@ export function formatStat(n: number | null): string {
   return n === null ? '—' : n.toFixed(2);
 }
 
-export type BatterResult = 'K' | 'BB' | 'HBP' | 'Hit' | 'Out';
+export type BatterResult = 'K' | 'BB' | 'HBP' | 'Hit' | 'Out' | 'Runner Out';
 
 export type BatterLine = {
   seq: GamePitchOutcome[];
@@ -128,6 +135,12 @@ export function groupBatters(outcomes: GamePitchOutcome[]): BatterLine[] {
   };
 
   outcomes.forEach((outcome) => {
+    if (outcome === 'other_out') {
+      // A standalone line, not part of anyone's at-bat - doesn't touch the
+      // batter currently being built up.
+      batters.push({ seq: ['other_out'], result: 'Runner Out' });
+      return;
+    }
     seq.push(outcome);
     if (outcome === 'strike') {
       strikes++;

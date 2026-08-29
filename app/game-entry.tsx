@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, Share, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -29,6 +30,7 @@ const OUTCOME_LETTER: Record<GamePitchOutcome, string> = {
   hbp: 'HP',
   hit: 'H',
   out: 'O',
+  other_out: 'RO',
 };
 
 const OUTCOME_COLOR: Record<GamePitchOutcome, string> = {
@@ -38,9 +40,25 @@ const OUTCOME_COLOR: Record<GamePitchOutcome, string> = {
   hbp: '#C23B38',
   hit: '#C23B38',
   out: '#2F9C71',
+  other_out: '#888888',
 };
 
+// "Runner Out" lines aren't a batter's turn at the plate, so they're
+// excluded from the "Batter N" numbering (a real batter after one keeps
+// counting from where the last real batter left off).
+function numberBatters(batters: BatterLine[]): { batter: BatterLine; num: number }[] {
+  let n = 0;
+  return batters.map((batter) => ({ batter, num: batter.result === 'Runner Out' ? -1 : n++ }));
+}
+
 function BatterRow({ batter, index, detailed }: { batter: BatterLine; index: number; detailed: boolean }) {
+  if (batter.result === 'Runner Out') {
+    return (
+      <View style={styles.runnerOutRow}>
+        <Text style={styles.runnerOutText}>Runner Out</Text>
+      </View>
+    );
+  }
   if (!detailed) {
     return (
       <View style={styles.compactBatterRow}>
@@ -83,6 +101,9 @@ export default function GameEntryScreen() {
   const [inningLog, setInningLog] = useState<InningLogRow[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [pendingStrikeout, setPendingStrikeout] = useState(false);
+  const [pendingHitResult, setPendingHitResult] = useState(false);
+  const [pendingOutType, setPendingOutType] = useState(false);
+  const [pendingRunType, setPendingRunType] = useState(false);
   const [showEndInning, setShowEndInning] = useState(false);
   const [runsInput, setRunsInput] = useState('');
   const [earnedRunsInput, setEarnedRunsInput] = useState('');
@@ -130,7 +151,8 @@ export default function GameEntryScreen() {
   const counts = useMemo(() => deriveCounts(events), [events]);
   const currentBatters = useMemo(() => groupBatters(events), [events]);
   const totalPitchCount = useMemo(
-    () => inningLog.reduce((sum, i) => sum + i.pitches.length, 0) + counts.pitchCount,
+    () =>
+      inningLog.reduce((sum, i) => sum + i.pitches.filter((p) => p !== 'other_out').length, 0) + counts.pitchCount,
     [inningLog, counts.pitchCount]
   );
 
@@ -138,14 +160,55 @@ export default function GameEntryScreen() {
   const ballLabel =
     counts.balls === 0 ? 'Ball' : counts.balls === 1 ? 'Ball 2' : counts.balls === 2 ? 'Ball 3' : 'Ball 4';
 
-  const appendEvent = (outcome: GamePitchOutcome) => setEvents((prev) => [...prev, outcome]);
+  const haptic = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-  const tapStrike = () => {
-    if (counts.strikes === 2) setPendingStrikeout(true);
-    else appendEvent('strike');
+  const appendEvent = (outcome: GamePitchOutcome) => {
+    haptic();
+    setEvents((prev) => [...prev, outcome]);
   };
 
-  const undo = () => setEvents((prev) => prev.slice(0, -1));
+  const tapStrike = () => {
+    haptic();
+    if (counts.strikes === 2) setPendingStrikeout(true);
+    else setEvents((prev) => [...prev, 'strike']);
+  };
+
+  const tapHit = () => {
+    haptic();
+    setPendingHitResult(true);
+  };
+
+  const confirmHitResult = (safe: boolean) => {
+    setPendingHitResult(false);
+    appendEvent(safe ? 'hit' : 'out');
+  };
+
+  const tapOut = () => {
+    haptic();
+    setPendingOutType(true);
+  };
+
+  const confirmOutType = (currentBatter: boolean) => {
+    setPendingOutType(false);
+    appendEvent(currentBatter ? 'out' : 'other_out');
+  };
+
+  const tapRun = () => {
+    haptic();
+    setPendingRunType(true);
+  };
+
+  const confirmRunType = (earned: boolean) => {
+    haptic();
+    setPendingRunType(false);
+    setRunsInput((prev) => String((parseInt(prev, 10) || 0) + 1));
+    if (earned) setEarnedRunsInput((prev) => String((parseInt(prev, 10) || 0) + 1));
+  };
+
+  const undo = () => {
+    haptic();
+    setEvents((prev) => prev.slice(0, -1));
+  };
 
   // Auto-prompt to close the inning once 3 outs are recorded - the End
   // Inning button stays available too, for a mid-inning pull.
@@ -437,20 +500,27 @@ export default function GameEntryScreen() {
           <Pressable style={[styles.outcomeButton, { backgroundColor: '#D6524F' }]} onPress={() => appendEvent('ball')}>
             <Text style={styles.outcomeButtonText}>{ballLabel}</Text>
           </Pressable>
+        </View>
+
+        <View style={styles.buttonRow}>
           <Pressable style={[styles.outcomeButton, { backgroundColor: '#E8A93B' }]} onPress={() => appendEvent('foul')}>
             <Text style={styles.outcomeButtonText}>Foul</Text>
           </Pressable>
+          <Pressable style={[styles.outcomeButton, { backgroundColor: '#C23B38' }]} onPress={tapHit}>
+            <Text style={styles.outcomeButtonText}>Hit</Text>
+          </Pressable>
         </View>
 
+        <Pressable style={[styles.outcomeButtonSmall, styles.hbpButton, { backgroundColor: '#C23B38' }]} onPress={() => appendEvent('hbp')}>
+          <Text style={styles.outcomeButtonSmallText}>HBP</Text>
+        </Pressable>
+
         <View style={styles.buttonRowSmall}>
-          <Pressable style={[styles.outcomeButtonSmall, { backgroundColor: '#C23B38' }]} onPress={() => appendEvent('hbp')}>
-            <Text style={styles.outcomeButtonSmallText}>HBP</Text>
-          </Pressable>
-          <Pressable style={[styles.outcomeButtonSmall, { backgroundColor: '#C23B38' }]} onPress={() => appendEvent('hit')}>
-            <Text style={styles.outcomeButtonSmallText}>Hit</Text>
-          </Pressable>
-          <Pressable style={[styles.outcomeButtonSmall, { backgroundColor: '#2F9C71' }]} onPress={() => appendEvent('out')}>
+          <Pressable style={[styles.outcomeButtonSmall, { backgroundColor: '#2F9C71' }]} onPress={tapOut}>
             <Text style={styles.outcomeButtonSmallText}>+Out</Text>
+          </Pressable>
+          <Pressable style={[styles.outcomeButtonSmall, { backgroundColor: '#4C9BE8' }]} onPress={tapRun}>
+            <Text style={styles.outcomeButtonSmallText}>+Run</Text>
           </Pressable>
         </View>
 
@@ -475,7 +545,9 @@ export default function GameEntryScreen() {
         {currentBatters.length === 0 ? (
           <Text style={styles.emptyText}>No batters faced yet this inning.</Text>
         ) : (
-          currentBatters.map((b, i) => <BatterRow key={i} batter={b} index={i} detailed={showDetail} />)
+          numberBatters(currentBatters).map(({ batter, num }, i) => (
+            <BatterRow key={i} batter={batter} index={num} detailed={showDetail} />
+          ))
         )}
 
         <Text style={[styles.logTitle, { marginTop: 20 }]}>Inning Log</Text>
@@ -489,13 +561,13 @@ export default function GameEntryScreen() {
                 <Pressable style={styles.logRow} onPress={() => setExpandedInning(expanded ? null : inn.number)}>
                   <Text style={styles.logInning}>Inning {inn.number}</Text>
                   <Text style={styles.logDetail}>
-                    {inn.pitches.length} pitches · {inn.outs} outs · {inn.runs} R ({inn.earnedRuns} ER)
+                    {inn.pitches.filter((p) => p !== 'other_out').length} pitches · {inn.outs} outs · {inn.runs} R ({inn.earnedRuns} ER)
                   </Text>
                 </Pressable>
                 {expanded && (
                   <View style={styles.expandedBatters}>
-                    {groupBatters(inn.pitches).map((b, i) => (
-                      <BatterRow key={i} batter={b} index={i} detailed />
+                    {numberBatters(groupBatters(inn.pitches)).map(({ batter, num }, i) => (
+                      <BatterRow key={i} batter={batter} index={num} detailed />
                     ))}
                   </View>
                 )}
@@ -525,6 +597,57 @@ export default function GameEntryScreen() {
                 }}
               >
                 <Text style={styles.confirmButtonYesText}>Yes, Out</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={pendingHitResult} animationType="fade" transparent>
+        <View style={styles.centerOverlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Ball in Play</Text>
+            <Text style={styles.confirmSubtitle}>Did the batter reach base, or get out?</Text>
+            <View style={styles.confirmButtons}>
+              <Pressable style={[styles.confirmButton, styles.confirmButtonNo]} onPress={() => confirmHitResult(false)}>
+                <Text style={styles.confirmButtonNoText}>Out</Text>
+              </Pressable>
+              <Pressable style={[styles.confirmButton, styles.confirmButtonYes]} onPress={() => confirmHitResult(true)}>
+                <Text style={styles.confirmButtonYesText}>Safe</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={pendingOutType} animationType="fade" transparent>
+        <View style={styles.centerOverlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Record Out</Text>
+            <Text style={styles.confirmSubtitle}>Is this the current batter, or a runner (caught stealing, picked off, etc.)?</Text>
+            <View style={styles.confirmButtons}>
+              <Pressable style={[styles.confirmButton, styles.confirmButtonNo]} onPress={() => confirmOutType(false)}>
+                <Text style={styles.confirmButtonNoText}>Other (Runner)</Text>
+              </Pressable>
+              <Pressable style={[styles.confirmButton, styles.confirmButtonYes]} onPress={() => confirmOutType(true)}>
+                <Text style={styles.confirmButtonYesText}>Current Batter</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={pendingRunType} animationType="fade" transparent>
+        <View style={styles.centerOverlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Record Run</Text>
+            <Text style={styles.confirmSubtitle}>Earned or unearned?</Text>
+            <View style={styles.confirmButtons}>
+              <Pressable style={[styles.confirmButton, styles.confirmButtonNo]} onPress={() => confirmRunType(false)}>
+                <Text style={styles.confirmButtonNoText}>Unearned</Text>
+              </Pressable>
+              <Pressable style={[styles.confirmButton, styles.confirmButtonYes]} onPress={() => confirmRunType(true)}>
+                <Text style={styles.confirmButtonYesText}>Earned</Text>
               </Pressable>
             </View>
           </View>
@@ -598,6 +721,9 @@ const styles = StyleSheet.create({
   buttonRowSmall: { flexDirection: 'row', gap: 8, marginBottom: 6 },
   outcomeButtonSmall: { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   outcomeButtonSmallText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  hbpButton: { alignSelf: 'stretch', marginBottom: 6 },
+  runnerOutRow: { paddingVertical: 6, alignItems: 'center' },
+  runnerOutText: { fontSize: 12, color: '#888', fontStyle: 'italic' },
 
   undoButton: { alignItems: 'center', paddingVertical: 10, marginBottom: 6 },
   undoText: { color: '#888', fontSize: 13 },
