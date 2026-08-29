@@ -23,8 +23,10 @@ export type GameSession = {
   game_subtype: 'practice' | 'live' | null;
   opponent: string | null;
   session_date: string;
+  session_time: string | null;
   notes: string | null;
   status: string;
+  missed_reason: string | null;
   innings: Inning[];
 };
 

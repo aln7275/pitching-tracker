@@ -12,6 +12,14 @@ export type Exercise = {
   requires_intensity: boolean;
   distance_unit: DistanceUnit;
   created_by: string | null;
+  // Suggested starting point, shown whenever this exercise is added to ANY
+  // template (new or existing) - never what a saved template actually used.
+  default_sets: number | null;
+  default_reps: number | null;
+  default_weight: number | null;
+  default_duration_seconds: number | null;
+  default_distance: number | null;
+  default_intensity: string | null;
 };
 
 export type ExerciseFieldKey =
@@ -123,6 +131,12 @@ export function exerciseFieldsFor(exercise: Exercise) {
 export function fieldLabel(field: ExerciseField, exercise: Exercise): string {
   if (field.key === 'distance') return `Distance (${exercise.distance_unit})`;
   return field.label;
+}
+
+// The exercise library's own suggested starting value for one field - what
+// pre-fills the form when this exercise is added to any template.
+export function exerciseSuggestedDefault(exercise: Exercise, key: ExerciseFieldKey): number | string | null {
+  return (exercise as any)[`default_${key}`];
 }
 
 export type WorkoutExerciseRow = {

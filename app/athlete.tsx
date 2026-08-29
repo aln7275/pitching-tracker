@@ -489,6 +489,41 @@ export default function AthleteHomeScreen() {
     );
   };
 
+  const cancelAllUpcomingWorkouts = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const { data: upcoming } = await supabase
+      .from('workouts')
+      .select('id')
+      .eq('athlete_id', id)
+      .eq('status', 'scheduled')
+      .gte('scheduled_date', today);
+
+    if (!upcoming || upcoming.length === 0) {
+      Alert.alert('Nothing to cancel', 'There are no upcoming scheduled workouts.');
+      return;
+    }
+
+    Alert.alert(
+      'Cancel all upcoming workouts?',
+      `This will permanently delete ${upcoming.length} upcoming scheduled workout${
+        upcoming.length === 1 ? '' : 's'
+      } for ${name}. Completed and missed workouts are not affected. This cannot be undone.`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel All',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase
+              .from('workouts')
+              .delete()
+              .in('id', upcoming.map((w) => w.id));
+          },
+        },
+      ]
+    );
+  };
+
   const filteredSessions = useMemo(() => {
     const cutoff = cutoffDate(dateRange);
     return sessions.filter((s) => {
@@ -644,8 +679,10 @@ export default function AthleteHomeScreen() {
         game_subtype: null,
         opponent: null,
         session_date: '',
+        session_time: null,
         notes: null,
         status: '',
+        missed_reason: null,
         innings: filteredGameSessions.flatMap((s) => s.innings),
       }),
     [filteredGameSessions]
@@ -748,24 +785,32 @@ export default function AthleteHomeScreen() {
                   router.push({ pathname: '/bullpen-setup', params: { athleteId: id, athleteName: name } })
                 }
               >
-                <Text style={styles.buttonText}>Start Bullpen Session</Text>
+                <Text style={styles.buttonText}>Quick Start Bullpen</Text>
               </Pressable>
             )}
 
             {canLogSessions && (
               <Pressable style={styles.button} onPress={startGame}>
-                <Text style={styles.buttonText}>Start Game</Text>
+                <Text style={styles.buttonText}>Quick Start Game</Text>
               </Pressable>
             )}
 
-            <Pressable
-              style={styles.secondaryButton}
-              onPress={() =>
-                router.push({ pathname: '/workouts', params: { athleteId: id, athleteName: name } })
-              }
-            >
-              <Text style={styles.secondaryButtonText}>Workouts</Text>
-            </Pressable>
+            {canLogSessions && (
+              <Pressable
+                style={styles.button}
+                onPress={() =>
+                  router.push({ pathname: '/workout-assign', params: { athleteId: id, athleteName: name } })
+                }
+              >
+                <Text style={styles.buttonText}>Quick Start Workout</Text>
+              </Pressable>
+            )}
+
+            {canLogSessions && (
+              <Pressable style={styles.cancelAllButton} onPress={cancelAllUpcomingWorkouts}>
+                <Text style={styles.cancelAllButtonText}>Cancel All Upcoming Workouts</Text>
+              </Pressable>
+            )}
 
             <Text style={styles.sectionTitle}>Analytics</Text>
 
@@ -1213,8 +1258,10 @@ const styles = StyleSheet.create({
 
   button: { backgroundColor: '#4C9BE8', borderRadius: 10, padding: 16, alignItems: 'center', marginBottom: 14 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  secondaryButton: { borderWidth: 1, borderColor: '#4C9BE8', borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 30 },
+  secondaryButton: { borderWidth: 1, borderColor: '#4C9BE8', borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 12 },
   secondaryButtonText: { color: '#4C9BE8', fontSize: 14, fontWeight: '600' },
+  cancelAllButton: { borderWidth: 1, borderColor: '#D6524F', borderRadius: 10, padding: 12, alignItems: 'center', marginBottom: 30 },
+  cancelAllButtonText: { color: '#D6524F', fontSize: 13, fontWeight: '600' },
   sectionTitle: {
     fontSize: 13,
     color: '#888',

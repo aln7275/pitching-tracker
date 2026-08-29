@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
+import { simulateBatters as simulateBattersShared } from '../types/bullpen';
 
 const PITCH_TYPES = ['Fastball', 'Curveball', 'Changeup', 'Slider'];
 
@@ -15,40 +16,24 @@ const OUTCOME_META: Record<string, { label: string; color: string }> = {
 type Pitch = { outcome: 'T' | 'C' | 'N'; pitchType: string; speed: string | null };
 
 function simulateBatters(pitches: Pitch[]) {
-  let strikes = 0, balls = 0, k = 0, bb = 0;
-  const batters: { seq: string[]; result: string | null }[] = [];
-  let seq: string[] = [];
-
-  for (const p of pitches) {
-    seq.push(p.outcome);
-    // C is neutral: a competitive pitch is close enough to be hittable, so it
-    // shouldn't auto-resolve as either a strike or a ball in the simulation.
-    if (p.outcome === 'T') strikes++;
-    else if (p.outcome === 'N') balls++;
-
-    if (strikes >= 3) {
-      k++;
-      batters.push({ seq, result: 'K' });
-      seq = []; strikes = 0; balls = 0;
-    } else if (balls >= 4) {
-      bb++;
-      batters.push({ seq, result: 'BB' });
-      seq = []; strikes = 0; balls = 0;
-    }
-  }
-  if (seq.length > 0) batters.push({ seq, result: null });
-
-  return { k, bb, battersFaced: batters.length, batters };
+  return simulateBattersShared(pitches);
 }
 
 export default function BullpenEntryScreen() {
-  const { athleteId, athleteName, sessionDate } = useLocalSearchParams();
+  const { athleteId, athleteName, sessionDate, sessionId, targetPitches, initialNotes } = useLocalSearchParams<{
+    athleteId: string;
+    athleteName: string;
+    sessionDate: string;
+    sessionId?: string;
+    targetPitches?: string;
+    initialNotes?: string;
+  }>();
   const router = useRouter();
 
   const [pitches, setPitches] = useState<Pitch[]>([]);
   const [pitchType, setPitchType] = useState('Fastball');
   const [speed, setSpeed] = useState('');
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(initialNotes ?? '');
   const [saving, setSaving] = useState(false);
 
   const counts = useMemo(() => {
@@ -97,19 +82,32 @@ export default function BullpenEntryScreen() {
       return;
     }
 
-    const { data: session, error: sessionError } = await supabase
-      .from('sessions')
-      .insert({
-        athlete_id: athleteId,
-        user_id: user.id,
-        session_type: 'bullpen',
-        bullpen_subtype: 'TCN',
-        session_date: sessionDate,
-        notes: notes.trim() || null,
-        status: 'submitted',
-      })
-      .select()
-      .single();
+    const sessionQuery = sessionId
+      ? supabase
+          .from('sessions')
+          .update({
+            session_date: sessionDate,
+            notes: notes.trim() || null,
+            status: 'submitted',
+          })
+          .eq('id', sessionId)
+          .select()
+          .single()
+      : supabase
+          .from('sessions')
+          .insert({
+            athlete_id: athleteId,
+            user_id: user.id,
+            session_type: 'bullpen',
+            bullpen_subtype: 'TCN',
+            session_date: sessionDate,
+            notes: notes.trim() || null,
+            status: 'submitted',
+          })
+          .select()
+          .single();
+
+    const { data: session, error: sessionError } = await sessionQuery;
 
     if (sessionError || !session) {
       Alert.alert('Error saving session', sessionError?.message ?? 'Unknown error');
@@ -143,7 +141,9 @@ export default function BullpenEntryScreen() {
       <HomeButton onPress={goHome} />
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content}>
       <Text style={styles.athleteName}>{athleteName}</Text>
-      <Text style={styles.sessionDate}>{sessionDate} · Bullpen · TCN</Text>
+      <Text style={styles.sessionDate}>
+        {sessionDate} · Bullpen · TCN{targetPitches ? ` · Target: ${targetPitches} pitches` : ''}
+      </Text>
 
       <View style={styles.row}>
         <View style={styles.speedBox}>

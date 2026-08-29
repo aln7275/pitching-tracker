@@ -5,12 +5,22 @@ import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-na
 import { HomeButton } from '../components/HomeButton';
 
 export default function GameSetupScreen() {
-  const { athleteId, athleteName } = useLocalSearchParams();
+  const { athleteId, athleteName, adoptSessionId, initialDate, initialOpponent, initialSubtype } =
+    useLocalSearchParams<{
+      athleteId: string;
+      athleteName: string;
+      adoptSessionId?: string;
+      initialDate?: string;
+      initialOpponent?: string;
+      initialSubtype?: string;
+    }>();
   const router = useRouter();
-  const [date, setDate] = useState(new Date());
+  const [date, setDate] = useState(initialDate ? new Date(initialDate + 'T00:00:00') : new Date());
   const [showPicker, setShowPicker] = useState(false);
-  const [gameSubtype, setGameSubtype] = useState<'practice' | 'live'>('live');
-  const [opponent, setOpponent] = useState('');
+  const [gameSubtype, setGameSubtype] = useState<'practice' | 'live'>(
+    initialSubtype === 'practice' ? 'practice' : 'live'
+  );
+  const [opponent, setOpponent] = useState(initialOpponent ?? '');
 
   const formattedDate = date.toLocaleDateString('en-US', {
     weekday: 'short',
@@ -28,6 +38,7 @@ export default function GameSetupScreen() {
         sessionDate: date.toISOString().split('T')[0],
         gameSubtype,
         opponent: opponent.trim(),
+        ...(adoptSessionId ? { adoptSessionId } : {}),
       },
     });
   };

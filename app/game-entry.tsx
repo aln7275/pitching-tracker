@@ -66,14 +66,16 @@ function BatterRow({ batter, index, detailed }: { batter: BatterLine; index: num
 }
 
 export default function GameEntryScreen() {
-  const { athleteId, athleteName, sessionDate, gameSubtype, opponent, resumeSessionId } = useLocalSearchParams<{
-    athleteId: string;
-    athleteName: string;
-    sessionDate: string;
-    gameSubtype: string;
-    opponent?: string;
-    resumeSessionId?: string;
-  }>();
+  const { athleteId, athleteName, sessionDate, gameSubtype, opponent, resumeSessionId, adoptSessionId } =
+    useLocalSearchParams<{
+      athleteId: string;
+      athleteName: string;
+      sessionDate: string;
+      gameSubtype: string;
+      opponent?: string;
+      resumeSessionId?: string;
+      adoptSessionId?: string;
+    }>();
   const router = useRouter();
 
   const [events, setEvents] = useState<GamePitchOutcome[]>([]);
@@ -153,6 +155,27 @@ export default function GameEntryScreen() {
 
   const ensureSession = async (): Promise<number> => {
     if (sessionId) return sessionId;
+
+    // Beginning tracking on a game that was scheduled ahead of time: adopt
+    // that existing row (flip it from 'scheduled' to 'in_progress') instead
+    // of inserting a second, disconnected one.
+    if (adoptSessionId) {
+      const { data, error } = await supabase
+        .from('sessions')
+        .update({
+          game_subtype: gameSubtype,
+          opponent: opponent || null,
+          session_date: sessionDate,
+          status: 'in_progress',
+        })
+        .eq('id', adoptSessionId)
+        .select()
+        .single();
+      if (error || !data) throw new Error(error?.message ?? 'Could not begin the scheduled game');
+      setSessionId(data.id);
+      return data.id;
+    }
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -270,8 +293,10 @@ export default function GameEntryScreen() {
     game_subtype: (gameSubtype as 'practice' | 'live') ?? null,
     opponent: opponent || null,
     session_date: sessionDate,
+    session_time: null,
     notes: null,
     status: 'submitted',
+    missed_reason: null,
     innings: inningLog.map((row) => ({
       id: 0,
       session_id: sessionId ?? 0,

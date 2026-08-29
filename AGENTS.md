@@ -16,11 +16,12 @@ A youth baseball/softball pitching tracker mobile app, built as a side project. 
 
 ## What's built (as of this handoff)
 
-### Bullpen tracking (TCN system) — ~90% complete
+### Bullpen tracking (TCN system)
 - Live bullpen session entry: pitches logged as T (Target — hit the spot), C (Competitive — close miss, still hittable/in-zone-ish), or N (Non-competitive — clear miss)
 - Session history, notes, native share sheet for results
 - Analytics on `app/athlete.tsx`: Target % Trend (line chart), T/C/N Breakdown (bar chart), date range + session type filters
-- **"Simulated Batters Faced" card** — derives simulated K's/BB's from the T/C/N pitch sequence for a single-pitcher bullpen with no real batter. **This logic is mid-redesign — see "Open Decision" below, this is the next thing to pick up.**
+- **"Simulated Batters Faced" card** — derives simulated K's/BB's from the T/C/N pitch sequence for a single-pitcher bullpen with no real batter. C is **neutral**: only T advances the simulated strike count, only N advances the ball count, C advances neither (rejected alternatives: C-as-always-strike, 50/50 random, alternating, experience-weighted — see git history on `app/athlete.tsx`'s `summarize()` for the reasoning). An all-C session shows a fallback message instead of a blank "0 batters faced". Shared logic lives in `types/bullpen.ts` (`simulateBatters`, `tcnCounts`), used by both the live entry screen and Home's read-only results card; `app/athlete.tsx`'s own `summarize()`/`shareSession()` predate that extraction and still have a near-duplicate local copy — worth consolidating if touched again.
+- Can now also be **scheduled ahead of time** (see "Home screen" below) with a target pitch count + coach notes, in addition to the original "start now" flow from the athlete tab.
 
 ### Athlete profiles
 - Fields: name, birthdate, throwing_hand (R/L), sport (baseball/softball), team_name (optional)
@@ -45,50 +46,30 @@ A youth baseball/softball pitching tracker mobile app, built as a side project. 
 - `context/AuthContext.tsx` — lightweight AuthProvider wrapping the app in `app/_layout.tsx`, exposes `session`, `user`, `loading`, `signOut()`
 - Logout button on `app/athletes.tsx` (the post-login home screen)
 
+### Messaging
+- In-app per-athlete messaging (`app/messages.tsx`) via Supabase Realtime, unread-count badge shown on `app/athlete.tsx`
+
+### Workouts
+- `exercises` / `workout_templates` / `workout_template_exercises` / `workouts` / `workout_exercises` tables. Exercises carry both per-exercise "suggested default" values (`exercises.default_*`, pre-fills a form whenever that exercise is newly added to any template) and, independently, a template's own saved values (`workout_template_exercises.default_*`) — the two are never overwritten by each other, so editing one template's numbers can't leak into another.
+- **Workout Templates** (`app/templates.tsx`, `app/template-edit.tsx`): reusable exercise bundles, user-owned (not athlete-scoped — a deliberate exception to the rest of the app's data model). Presets (`is_preset = true, created_by = null`) are shared/global; hiding or editing a preset only ever affects that one user's view — `workout_template_hidden_for_user` is a per-user hide, and editing a preset **forks** a personal copy under the same name rather than mutating the shared row. Save (in-place update for an owned template, fork-and-hide for a preset) vs. Save As (always creates a new copy-and-rename, original untouched) are both name-unique per user via a partial unique index that excludes preset rows. Assigning a template to an athlete (`workout-assign.tsx`'s "Start from Template") is a one-time copy into that athlete's `workouts`/`workout_exercises`, never a live link.
+- Scheduling/completion lifecycle (`scheduled` → `completed`/`missed`, with `missed_reason` reason chips) originally lived on a dedicated `app/workouts.tsx` calendar screen — **that screen is retired**; see "Home screen" below, which absorbed it.
+
+### Game/Pitch Tracking
+- Live entry (`app/game-setup.tsx` → `app/game-entry.tsx`): Practice/Scrimmage vs. Live Game, dynamic ball/strike/foul button labels, 3rd-strike confirm, manual +Out, End Inning (Total Runs required, Earned Runs optional), inning-batched persistence with resume, shareable recap. One shared `sessions` table (`session_type: 'bullpen' | 'game'`) backs both bullpen and games.
+- Can now also be **scheduled ahead of time** with date, optional time, and opponent/game name — see "Home screen" below.
+
+### Home screen — unified scheduling and results surface
+- `app/home.tsx`: a hand-built "boxed" month calendar aggregating workouts/bullpens/games across every athlete (or filtered to one via pills — the "All" pill only appears once you have more than one athlete).
+- Adding something: tap a day (or use the `+Workout`/`+Bullpen`/`+Game` quick-add row, which already knows its type and so skips straight past that step) → pick an athlete only if more than one is currently selected → land on the right create/schedule screen (`workout-assign`, the new `bullpen-schedule`, or the new `game-schedule`).
+- Viewing/acting on something: tapping an existing item opens a per-type card (`components/WorkoutDayCard.tsx`, `BullpenDayCard.tsx`, `GameDayCard.tsx`) in place. Once an item is resolved (workout `completed`/`missed`, bullpen `submitted`/`missed`, game `submitted`/`missed`) it's read-only — no more edits. While unresolved (`scheduled`, or a game actually `in_progress`) it stays editable: Mark Missed (reason chips + note, the same pattern across all three types) and Delete are available, except a game that's already past its date and never started can't be deleted (only resolved via Mark Missed or by opening tracking and filling it in retroactively) — a *future* scheduled game can still be deleted outright. Tapping a genuinely `in_progress` game skips the card and resumes live tracking directly.
+- A scheduled bullpen/game is a real row from the moment it's scheduled (`sessions.status = 'scheduled'`, plus `target_pitches` for bullpen or `session_time`/`opponent` for games) — opening it to begin tracking adopts that same row rather than creating a second, disconnected one. Closing the app after opening a scheduled item but before finishing still discards any half-entered pitches (neither bullpen nor game checkpoints mid-entry), but the scheduled placeholder itself survives so nothing is silently lost.
+- The athlete tab's "Quick Start Bullpen" / "Quick Start Game" / "Quick Start Workout" buttons remain a separate, unscheduled "start right now" shortcut, unchanged by any of the above.
+
 ## Known workflow gotcha (Windows/Expo)
 Multiple times this project has hit a "React has detected a change in the order of Hooks" crash originating from `expo-router`'s internal `ContextNavigator`/`useStore`, even when the actual app code was fine. In one confirmed case, the real cause was a stray `useState()` call accidentally placed at module scope (outside any component) in `athlete.tsx` — Expo Router scans every file under `app/` at boot, so this crashed the whole app even when viewing an unrelated screen. **If this error recurs: grep every file under `app/` for hooks (`useState`, `useEffect`, etc.) called outside a component function before assuming it's environment flakiness.** Standard recovery attempted (didn't always work alone): `npx expo start -c`, clear Expo Go cache/data on device, full reboot, `rm -rf node_modules && npm install`.
 
-## Open decision — pick up here next
-
-**"Simulated Batters Faced" C-pitch handling is unresolved and is the next task.**
-
-The problem: the original logic counted both T and C as strikes (only N as a ball). Real session data (T41/C17/N17) produced an unrealistic 18-for-18 simulated strikeout rate — the model has no "ball in play" outcome, so with only two possible resolutions (K or BB), sequences funnel almost entirely into whichever is reached first.
-
-Explored and rejected:
-- **C = always strike** (original): overcounts K's badly
-- **C = 50/50 random**: not reproducible/trustworthy as a stat parents compare over time
-- **C = alternating strike/ball**: arbitrary, not really grounded in anything
-- **C weighted by athlete "experience level"**: rejected because it would make the same kid's stat non-comparable over time if his level changes — undermines the actual goal (seeing real improvement trend)
-- Real MLB Statcast data on "shadow zone" (borderline) pitches shows ~50% called-strike rate **on taken pitches only** — but this doesn't cover swung-at/contact outcomes, which a "hittable, close to the zone" C pitch would often produce in reality. So no clean empirical rule fully justifies any single treatment.
-
-**Landed on, not yet implemented:** C is **neutral** — only T advances the simulated strike count, only N advances the simulated ball count, C advances neither. Verified against real data (T41/C17/N17 → 13 simulated K, 4 simulated BB, realistic) and the earlier T6/C6/N3 example (2 K, 0 BB, reasonable for small sample).
-
-**Known edge case, accepted as-is:** an all-C session (e.g. 15/15 C pitches) would show 0 batters faced under this rule, since nothing advances either counter. Agreed to add a fallback message for `battersFaced === 0` with real pitches thrown, rather than showing a blank/broken-looking 0.
-
-**Next planned enhancement (not yet designed in detail):** add a third stat alongside simulated K's and BB's on the card — something that surfaces the volume of C ("competitive") pitches thrown, so a strong session heavy in competitive-but-neutral pitches doesn't look like nothing happened. Exact label/presentation still needs to be worked out.
-
-**Implementation location:** the `summarize()` function in `app/athlete.tsx` (used by both the analytics cards and `shareSession()`'s share-text formatting — both need to stay consistent if the logic changes).
-
-## Roadmap (confirmed order)
-1. ~~Logout~~ ✅
-2. ~~Test/build ownership transfer~~ ✅
-3. ~~Athlete editing~~ ✅
-4. **Fix C-pitch simulated batters-faced logic** ← next
-5. Workouts feature (not started)
-6. Game/pitch tracking (not started) — full mechanics design already locked in below
-
-## Game/Pitch Tracking — locked design (not yet built)
-Intentionally lightweight, not a GameChanger competitor. Parent-driven live charting during a game or scrimmage.
-
-- Session type selector at start: **Practice/Scrimmage vs. Live Game** (same mechanics either way, just a filterable field — avoids building "live bullpen" as a separate third feature)
-- Pitch-by-pitch buttons with **dynamic labels reflecting live count**: "Strike" → "Strike 2", "Ball" → "Ball 2" → "Ball 3"
-- **Foul** button: adds to pitch count, does NOT advance strike count past 2 (real baseball rule — foul with 2 strikes stays at 2, except bunts)
-- 3rd strike → confirmation popup ("Record out — K?") rather than silent auto-out, to catch mis-taps
-- **HBP** and **Hit** buttons: end the at-bat, batter reaches base
-- Manual **+Out** button for balls in play (groundout/flyout/etc.)
-- **End Inning** button → popup asks for **Total Runs** (required) and **Earned Runs** (optional, defaults to total runs if left blank) — this gives both RA (Runs Allowed, no judgment call needed) and ERA (optional, for parents who want to track it precisely) without forcing an error/no-error judgment call on everyone
-- Derived stats once built: Innings Pitched, Pitches/Inning (avg), Runs Allowed, ERA (optional/derived), WHIP, K/9, BB/9, Strike %
-- Photo/video upload also planned for this feature: up to ~30-second clips, exact max clip count (1 vs. 3) still undecided — deliberately deferred to decide with real usage rather than guessing now. Storage/compression cost noted as a real consideration once built (Supabase storage limits).
+## Roadmap
+Logout, ownership transfer, athlete editing, the C-pitch simulated-batters-faced fix, the Workouts feature, Game/Pitch Tracking, Messaging, Workout Templates, and the Home screen (including scheduled bullpen/game sessions) are all built — see "What's built" above for each. Photo/video upload for Game/Pitch Tracking (up to ~30-second clips, exact max clip count still undecided) remains explicitly deferred to decide with real usage rather than guessing now; Supabase storage/compression cost is a real consideration once it's picked up. No other item is currently queued — check with the user for what's next before assuming.
 
 ## Product principles (keep applying these)
 - Capture raw values, per-pitch timestamps, consistent IDs from day one — schema decisions now affect the longitudinal dataset later

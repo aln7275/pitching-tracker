@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export type DayEvent = {
+  id: number;
   type: 'workout' | 'bullpen' | 'game';
   label: string; // short chip letter, e.g. 'W'
   color: string;
   detail: string; // full text shown in the day-detail list
   athleteId: number;
+  status: string;
 };
 
 function toYMD(d: Date) {

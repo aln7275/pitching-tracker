@@ -15,6 +15,7 @@ import {
 import { DurationInput } from '../components/DurationInput';
 import { HomeButton } from '../components/HomeButton';
 import { supabase } from '../supabase';
+import { WorkoutTemplate, WorkoutTemplateExerciseRow } from '../types/templates';
 import {
   DistanceUnit,
   Exercise,
@@ -101,6 +102,11 @@ export default function WorkoutAssignScreen() {
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [customModalVisible, setCustomModalVisible] = useState(false);
 
+  const [templateId, setTemplateId] = useState<number | null>(null);
+  const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
+  const [templatePickerVisible, setTemplatePickerVisible] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
+
   const [repeatMode, setRepeatMode] = useState<'none' | 'weekly' | 'interval'>('none');
   const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([]);
   const [intervalDays, setIntervalDays] = useState('7');
@@ -113,15 +119,22 @@ export default function WorkoutAssignScreen() {
     else setExercises(data as Exercise[]);
   }, []);
 
+  const fetchTemplates = useCallback(async () => {
+    const { data, error } = await supabase.from('workout_templates').select('*').order('name');
+    if (error) console.log('Error fetching templates:', error.message);
+    else setTemplates(data as WorkoutTemplate[]);
+  }, []);
+
   useEffect(() => {
     fetchExercises();
+    fetchTemplates();
     (async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
       setUserId(user?.id ?? null);
     })();
-  }, [fetchExercises]);
+  }, [fetchExercises, fetchTemplates]);
 
   const categories = useMemo(() => {
     const set = new Set(exercises.map((e) => e.category));
@@ -150,6 +163,49 @@ export default function WorkoutAssignScreen() {
     setSelected((prev) =>
       prev.map((r) => (r.key === key ? { ...r, values: { ...r.values, [field]: value } } : r))
     );
+  };
+
+  const applyTemplate = async (template: WorkoutTemplate) => {
+    setTemplateLoading(true);
+    const { data, error } = await supabase
+      .from('workout_template_exercises')
+      .select('*, exercises(*)')
+      .eq('template_id', template.id)
+      .order('order_index');
+    setTemplateLoading(false);
+    if (error) {
+      Alert.alert('Error loading template', error.message);
+      return;
+    }
+    const rows = (data ?? []) as WorkoutTemplateExerciseRow[];
+    setSelected(
+      rows.map((r) => {
+        const values: Partial<Record<ExerciseFieldKey, string>> = {};
+        exerciseFieldsFor(r.exercises).forEach((f) => {
+          const v = (r as any)[`default_${f.key}`];
+          if (v != null) values[f.key] = f.format(v);
+        });
+        return { key: `tmpl-${r.id}-${Date.now()}`, exercise: r.exercises, values };
+      })
+    );
+    setTemplateId(template.id);
+    if (!title.trim()) setTitle(template.name);
+    setTemplatePickerVisible(false);
+  };
+
+  const openTemplatePicker = () => {
+    if (selected.length > 0) {
+      Alert.alert(
+        'Replace current exercises?',
+        'Starting from a template will replace the exercises currently in this list.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Continue', onPress: () => setTemplatePickerVisible(true) },
+        ]
+      );
+    } else {
+      setTemplatePickerVisible(true);
+    }
   };
 
   const toggleWeekday = (day: number) => {
@@ -190,6 +246,7 @@ export default function WorkoutAssignScreen() {
       status: mode === 'log' ? 'completed' : 'scheduled',
       notes: notes.trim() || null,
       recurrence_group_id: groupId,
+      template_id: templateId,
     }));
 
     const { data: insertedWorkouts, error: workoutsError } = await supabase
@@ -341,6 +398,11 @@ export default function WorkoutAssignScreen() {
       )}
 
       <Text style={styles.label}>Exercises</Text>
+      <Pressable style={styles.addExerciseButton} onPress={openTemplatePicker} disabled={templateLoading}>
+        <Text style={styles.addExerciseButtonText}>
+          {templateLoading ? 'Loading...' : 'Start from Template'}
+        </Text>
+      </Pressable>
       {selected.map((row) => {
         const fields = exerciseFieldsFor(row.exercise);
         return (
@@ -468,6 +530,43 @@ export default function WorkoutAssignScreen() {
           addExercise(exercise);
         }}
       />
+
+      <Modal visible={templatePickerVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Start from Template</Text>
+            <ScrollView style={styles.pickerList}>
+              {templates.filter((t) => !t.is_preset).length > 0 && (
+                <Text style={styles.label}>My Templates</Text>
+              )}
+              {templates
+                .filter((t) => !t.is_preset)
+                .map((t) => (
+                  <Pressable key={t.id} style={styles.pickerRow} onPress={() => applyTemplate(t)}>
+                    <Text style={styles.pickerRowName}>{t.name}</Text>
+                  </Pressable>
+                ))}
+              {templates.filter((t) => t.is_preset).length > 0 && <Text style={styles.label}>Presets</Text>}
+              {templates
+                .filter((t) => t.is_preset)
+                .map((t) => (
+                  <Pressable key={t.id} style={styles.pickerRow} onPress={() => applyTemplate(t)}>
+                    <Text style={styles.pickerRowName}>{t.name}</Text>
+                  </Pressable>
+                ))}
+              {templates.length === 0 && <Text style={styles.noFieldsText}>No templates yet.</Text>}
+            </ScrollView>
+            <View style={styles.modalButtons}>
+              <Pressable
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setTemplatePickerVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Close</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
       </ScrollView>
     </View>
   );
